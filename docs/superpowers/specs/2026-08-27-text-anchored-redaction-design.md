@@ -112,6 +112,9 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
      held it to 1,427 pages/hour despite its size. Also non-Apache LFM
      license. Spike results: docs/superpowers/specs plus
      private-results/spike/lfm25-26b (local only).
+  6. MiniCPM-V-4.6 (openbmb, ~1.3B incl. vision tower) — TESTED 2026-08-27
+     spike: does not load in vLLM 0.28 (minicpmv4_6 weight mapping
+     unsupported). Not pursued further; below the viable size floor anyway.
 - Model provenance rule: official publisher repos only (Qwen, Google, Meta,
   Mistral orgs), safetensors, pinned revision. No community finetunes,
   distills, "uncensored" variants, or third-party GGUF quants — this
