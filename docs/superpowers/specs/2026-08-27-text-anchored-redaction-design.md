@@ -49,8 +49,11 @@ city/state/ZIP everywhere.
 
 ```
 PDF/image upload
-  └─ document.py (existing, kept): render pages (pdfium) + extract words with
-     boxes (pdfplumber text layer; Tesseract OCR when no text layer)
+  └─ document.py (existing, adapted): render pages (pdfium) + extract words
+     with boxes (pdfplumber text layer; PaddleOCR PP-OCRv5 when no text
+     layer or the text-quality gate rejects it — chosen over Tesseract for
+     accuracy and over GLM-OCR because Paddle natively returns the
+     word-level boxes the anchor contract requires)
        └─ textgate.py (NEW): per-page text-layer quality gate
             garbage text layer → discard, OCR the rendered image instead
        └─ layout.py (NEW): words+boxes → layout-preserving text grid
@@ -95,17 +98,22 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
 
 ### Model serving
 
+- DECIDED 2026-08-27 after the live spike on 7 real client documents:
+  **google/gemma-4-E2B-it** is the production model (revision pinned at
+  implementation). 11,013 pages/hour measured on one L4; best client-side
+  recall of the field; errors trend toward safe over-redaction.
+  gemma-4-12B-it in FP8 remains the escalation path if the full-corpus
+  benchmark exposes attribution failures.
 - vLLM OpenAI-compatible server inside the worker container, localhost only.
-- Candidates to benchmark (current generation as of 2026-08; all fit an L4
-  in bf16/FP8; exact HF ids and revisions pinned at implementation time):
-  1. Qwen3.5-4B (expected winner on speed)
-  2. Qwen3.5-9B (field reports praise instruction following but call it
-     lazy on extraction — the benchmark decides)
-  3. gemma-4-E4B-it (different family as control; gemma-4-12B-it in FP8 is
-     the fallback upgrade if all candidates disappoint on attribution)
-  4. gemma-4-E2B-it (~2.3B effective; cheapest/fastest row — wins by
-     default if it passes client-vs-payer attribution; verify vLLM
-     support for the E-series architecture when pinning ids, else drop)
+- Candidate history (spike, 2026-08-27 — retained for the record):
+  1. Qwen3.5-4B — TESTED: runner-up. 6,275 pages/hour with thinking
+     disabled; good precision on payer-side data but missed the 1098
+     property address (danger-direction). Kept as the config-switchable
+     alternate model.
+  2. Qwen3.5-9B — not tested; superseded by the E2B win.
+  3. gemma-4-E4B-it — not tested; E2B passed outright so the larger
+     sibling was unnecessary.
+  4. gemma-4-E2B-it — TESTED: WINNER (see decision above).
   5. LFM2.5-2.6B (LiquidAI) — TESTED 2026-08-27 spike, REJECTED: 11 of 17
      pages returned zero findings (names/streets left visible; SSN safety
      net had to carry 8 boxes) and ~5k chars of rambling output per page
@@ -158,9 +166,11 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
   spanning W-2, 1099-DIV/INT/R/G/SA, 1098, K-1, brokerage statements.
   Documents live only on the local machine and the private S3 evaluation
   bucket; never in git (`private-evaluation/`, `private-results/` ignored).
-- Run all three candidate models via the existing AWS evaluation plumbing
-  (`evaluation.tf`, `aws_runner.py`).
-- Outputs per model: redacted PDFs in `private-results/`, an HTML side-by-side
+- Confirmatory run of the production pipeline (gemma-4-E2B-it + PaddleOCR +
+  propagation + fuzzy anchoring) via the AWS evaluation plumbing
+  (`evaluation.tf`, `aws_runner.py`); Qwen3.5-4B as a comparison row if a
+  second opinion is wanted.
+- Outputs: redacted PDFs in `private-results/`, an HTML side-by-side
   review sheet, measured pages/hour.
 - Acceptance gates:
   1. Zero visible SSN-format values in any output (deterministic re-OCR
@@ -168,7 +178,7 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
   2. Manual review of the sheet: no missed client names / address lines the
      reviewer flags as unacceptable; payer/employer info intact.
   3. Sustained throughput ≥ 1,000 pages/hour on g6.xlarge; report actual.
-- Winner is pinned in `Settings.model_id` + revision.
+- Model id + revision pinned in `Settings.model_id`.
 
 ## Error handling
 
