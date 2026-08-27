@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "taxhance-pii-redaction"
+version = "0.1.0"
+description = "Auditable, self-hostable PII redaction for tax documents"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = { file = "LICENSE" }
+authors = [{ name = "TaxHance" }]
+dependencies = [
+  "boto3>=1.40,<2",
+  "fastapi>=0.116,<1",
+  "mangum>=0.19,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+worker = [
+  "json-repair>=0.47,<1",
+  "numpy>=2.2,<3",
+  "pdfplumber>=0.11,<1",
+  "Pillow>=12,<13",
+  "pypdfium2>=4.30,<5",
+  "pytesseract>=0.3.13,<1",
+  "rapidfuzz>=3.9,<4",
+]
+model = [
+  "accelerate>=1.10,<2",
+  "bitsandbytes>=0.47,<1; platform_system == 'Linux'",
+  "torch>=2.8,<3",
+  "torchvision>=0.28,<0.29",
+  "transformers>=5.5,<6",
+]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.17,<2",
+  "pip-audit>=2.9,<3",
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+pii-api = "taxhance_pii.api.main:run"
+pii-worker = "taxhance_pii.worker.main:run"
+pii-evaluate = "taxhance_pii.evaluation.cli:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/taxhance_pii"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM"]
+ignore = ["S101"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["taxhance_pii"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["taxhance_pii"]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "awscrt>=0.29,<1",
+]
