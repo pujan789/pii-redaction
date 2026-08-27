@@ -96,10 +96,19 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
 ### Model serving
 
 - vLLM OpenAI-compatible server inside the worker container, localhost only.
-- Candidates to benchmark (all fit an L4 in bf16/FP8):
-  1. Qwen3-4B-Instruct-2507 (expected winner on speed)
-  2. Qwen3-8B
-  3. Llama-3.1-8B-Instruct
+- Candidates to benchmark (current generation as of 2026-08; all fit an L4
+  in bf16/FP8; exact HF ids and revisions pinned at implementation time):
+  1. Qwen3.5-4B (expected winner on speed)
+  2. Qwen3.5-9B (field reports praise instruction following but call it
+     lazy on extraction — the benchmark decides)
+  3. gemma-4-E4B-it (different family as control; gemma-4-12B-it in FP8 is
+     the fallback upgrade if all three disappoint on attribution accuracy)
+- Model provenance rule: official publisher repos only (Qwen, Google, Meta,
+  Mistral orgs), safetensors, pinned revision. No community finetunes,
+  distills, "uncensored" variants, or third-party GGUF quants — this
+  pipeline handles client SSNs; the supply chain stays first-party. If
+  quantization is needed, use the publisher's FP8/AWQ release or quantize
+  in-house with llm-compressor.
 - All pages of a document submitted concurrently (async client) so vLLM's
   continuous batching keeps the GPU saturated.
 - Deterministic decoding (temperature 0), pinned model revisions.
