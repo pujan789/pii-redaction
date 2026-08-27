@@ -50,10 +50,12 @@ city/state/ZIP everywhere.
 ```
 PDF/image upload
   └─ document.py (existing, adapted): render pages (pdfium) + extract words
-     with boxes (pdfplumber text layer; PaddleOCR PP-OCRv5 when no text
-     layer or the text-quality gate rejects it — chosen over Tesseract for
-     accuracy and over GLM-OCR because Paddle natively returns the
-     word-level boxes the anchor contract requires)
+     with boxes (pdfplumber text layer; Tesseract OCR when no text layer or
+     the text-quality gate rejects it). V1 keeps Tesseract: PaddleOCR's
+     quality is better (validated 2026-08-27) but CPU inference is 41–487
+     s/page and paddlepaddle-gpu corrupts vLLM's torch/NCCL in a shared
+     environment — a Paddle sidecar container is the recorded future
+     upgrade. GLM-OCR rejected for this slot: no word-level geometry.
        └─ textgate.py (NEW): per-page text-layer quality gate
             garbage text layer → discard, OCR the rendered image instead
        └─ layout.py (NEW): words+boxes → layout-preserving text grid
