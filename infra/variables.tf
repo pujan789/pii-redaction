@@ -172,3 +172,15 @@ variable "budget_alert_email" {
   type        = string
   default     = ""
 }
+
+variable "warm_window_start_cron" {
+  description = "UTC cron: scale to 1 for the US business-hours warm window (07:00 ET)."
+  type        = string
+  default     = "0 11 * * *"
+}
+
+variable "warm_window_end_cron" {
+  description = "UTC cron: overnight scale-to-zero (21:00 ET)."
+  type        = string
+  default     = "0 1 * * *"
+}

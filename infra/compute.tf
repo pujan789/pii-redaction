@@ -75,20 +75,26 @@ resource "aws_autoscaling_group" "worker" {
   count = var.deploy_application ? 1 : 0
 
   name             = "${local.prefix}-worker"
-  min_size         = var.evaluation_cpu_fallback ? 0 : var.gpu_capacity_desired_count
+  min_size         = 0
   max_size         = 2
   desired_capacity = var.gpu_capacity_desired_count
   vpc_zone_identifier = concat(
     [aws_subnet.worker.id],
     aws_subnet.worker_secondary[*].id,
   )
-  health_check_type = "EC2"
+  health_check_type  = "EC2"
+  capacity_rebalance = true
+
+  lifecycle {
+    # Scheduled actions and the off-hours queue alarm own desired capacity.
+    ignore_changes = [desired_capacity]
+  }
 
   mixed_instances_policy {
     instances_distribution {
-      on_demand_allocation_strategy            = "lowest-price"
-      on_demand_base_capacity                  = 1
-      on_demand_percentage_above_base_capacity = 100
+      on_demand_base_capacity                  = 0
+      on_demand_percentage_above_base_capacity = 0
+      spot_allocation_strategy                 = "price-capacity-optimized"
     }
 
     launch_template {
@@ -251,4 +257,48 @@ resource "aws_ecs_service" "worker" {
   enable_execute_command             = false
 
   depends_on = [aws_ecs_cluster_capacity_providers.worker]
+}
+
+resource "aws_autoscaling_schedule" "warm_window_start" {
+  count                  = var.deploy_application ? 1 : 0
+  scheduled_action_name  = "warm-window-start"
+  autoscaling_group_name = aws_autoscaling_group.worker[0].name
+  recurrence             = var.warm_window_start_cron
+  min_size               = 0
+  max_size               = 2
+  desired_capacity       = 1
+}
+
+resource "aws_autoscaling_schedule" "warm_window_end" {
+  count                  = var.deploy_application ? 1 : 0
+  scheduled_action_name  = "warm-window-end"
+  autoscaling_group_name = aws_autoscaling_group.worker[0].name
+  recurrence             = var.warm_window_end_cron
+  min_size               = 0
+  max_size               = 2
+  desired_capacity       = 0
+}
+
+resource "aws_autoscaling_policy" "offhours_scale_up" {
+  count                  = var.deploy_application ? 1 : 0
+  name                   = "offhours-queue-scale-up"
+  autoscaling_group_name = aws_autoscaling_group.worker[0].name
+  policy_type            = "SimpleScaling"
+  adjustment_type        = "ExactCapacity"
+  scaling_adjustment     = 1
+  cooldown               = 600
+}
+
+resource "aws_cloudwatch_metric_alarm" "offhours_queue_depth" {
+  count               = var.deploy_application ? 1 : 0
+  alarm_name          = "${local.prefix}-offhours-queue-depth"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.jobs.name }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  alarm_actions       = [aws_autoscaling_policy.offhours_scale_up[0].arn]
 }
