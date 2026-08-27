@@ -48,25 +48,6 @@ class Settings(BaseSettings):
     vllm_gpu_memory_utilization: float = Field(default=0.90, ge=0.3, le=0.98)
     vllm_startup_timeout_seconds: int = Field(default=600, ge=60, le=1_800)
     detector_concurrency: int = Field(default=8, ge=1, le=64)
-    # Legacy fields consumed only by the old VLM stack; deleted with it in the
-    # pipeline-rewiring task.
-    model_backend: Literal["transformers", "llama_cpp"] = "transformers"
-    model_dtype: Literal["bfloat16", "float16", "float32", "4bit"] = "4bit"
-    model_max_pixels: int = Field(default=2_073_600, ge=262_144, le=16_777_216)
-    model_audit_passes: int = Field(default=1, ge=0, le=2)
-    llama_server_path: Path = Path("/opt/llama.cpp/llama-server")
-    llama_model_file: str = Field(
-        default="gemma-4-E2B-it-UD-Q4_K_XL.gguf",
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
-    )
-    llama_mmproj_file: str = Field(
-        default="mmproj-F16.gguf",
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
-    )
-    llama_server_port: int = Field(default=8081, ge=1024, le=65_535)
-    llama_context_size: int = Field(default=8192, ge=4096, le=131_072)
-    llama_image_min_tokens: int = Field(default=1024, ge=256, le=16_384)
-    llama_startup_timeout_seconds: int = Field(default=300, ge=30, le=1_800)
     render_dpi: int = Field(default=200, ge=96, le=400)
     ocr_enabled: bool = True
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)

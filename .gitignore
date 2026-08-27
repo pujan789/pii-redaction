@@ -28,3 +28,6 @@ crash.log
 terraform.tfvars
 .DS_Store
 Thumbs.db
+tmp/
+.firecrawl/
+.playwright-mcp/

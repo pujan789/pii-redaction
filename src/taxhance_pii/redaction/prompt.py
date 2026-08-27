@@ -2,8 +2,6 @@
 through this prompt — form-specific routing is deliberately gone."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from taxhance_pii.domain import PiiCategory
 
 PROMPT_VERSION = "tax-pii-v8"
@@ -110,35 +108,3 @@ def build_messages(page_grid: str) -> list[dict[str, str]]:
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": USER_TEMPLATE.format(page_grid=page_grid)},
     ]
-
-
-# --- Legacy compatibility shim ------------------------------------------------
-# worker/model.py (the old VLM stack) still imports these names. That module and
-# this whole block are deleted together in the pipeline-rewiring task; nothing
-# new may depend on anything below this line.
-
-AUTOMATIC_PII_CATEGORIES = frozenset(
-    category
-    for category in PiiCategory
-    if category not in {PiiCategory.BANK_ACCOUNT, PiiCategory.USER_ADDED}
-)
-
-
-@dataclass(frozen=True)
-class PromptProfile:
-    prompt: str
-    max_findings: int
-    categories: frozenset[PiiCategory]
-    include_confidence: bool
-    crop_bottom: int | None = None
-    skip_model: bool = False
-
-
-def page_prompt_profile(words: object, *, audit: bool) -> PromptProfile:
-    del words, audit
-    return PromptProfile(
-        prompt="legacy path pending deletion",
-        max_findings=100,
-        categories=AUTOMATIC_PII_CATEGORIES,
-        include_confidence=True,
-    )
