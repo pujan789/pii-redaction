@@ -106,9 +106,12 @@ output), so parsing cannot fail; no GBNF, no repair-retry loops. Categories:
   4. gemma-4-E2B-it (~2.3B effective; cheapest/fastest row — wins by
      default if it passes client-vs-payer attribution; verify vLLM
      support for the E-series architecture when pinning ids, else drop)
-  5. LFM2.5-2.6B (LiquidAI; first-party and ungated, but ships under the
-     LFM license, not Apache — review license terms before any
-     production use; benchmark row is fine)
+  5. LFM2.5-2.6B (LiquidAI) — TESTED 2026-08-27 spike, REJECTED: 11 of 17
+     pages returned zero findings (names/streets left visible; SSN safety
+     net had to carry 8 boxes) and ~5k chars of rambling output per page
+     held it to 1,427 pages/hour despite its size. Also non-Apache LFM
+     license. Spike results: docs/superpowers/specs plus
+     private-results/spike/lfm25-26b (local only).
 - Model provenance rule: official publisher repos only (Qwen, Google, Meta,
   Mistral orgs), safetensors, pinned revision. No community finetunes,
   distills, "uncensored" variants, or third-party GGUF quants — this
