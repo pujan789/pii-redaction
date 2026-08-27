@@ -1,0 +1,16 @@
+aws_region          = "us-east-1"
+project_name        = "pii-redaction"
+environment         = "prod"
+allowed_origins     = ["https://taxhance.com"]
+monthly_budget_usd  = 777
+budget_alert_email  = ""
+gpu_instance_type   = "g6.xlarge"
+worker_service_desired_count = 1
+model_id            = "google/gemma-4-E2B-it"
+model_revision      = "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+
+# First apply with deploy_application=false to create ECR repositories.
+# Build and push images, copy their digest URIs below, then set true.
+deploy_application = false
+lambda_image_uri   = ""
+worker_image_uri   = ""
