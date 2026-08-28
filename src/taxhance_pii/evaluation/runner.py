@@ -230,6 +230,7 @@ def run_evaluation(
     existing_results: list[EvaluationResult] | None = None,
     on_result: ResultCallback | None = None,
 ) -> list[EvaluationResult]:
+    run_started = time.monotonic()
     paths = EvaluationPaths(output)
     entries = [entry for entry in manifest.entries if entry.split == split]
     entry_ids = {entry.evaluation_id for entry in entries}
@@ -285,7 +286,10 @@ def run_evaluation(
         "failures": sum(result.error_code is not None for result in results),
         "residual_deterministic": sum(result.residual_deterministic for result in results),
         "residual_model": sum(result.residual_model for result in results),
+        # Sum of per-document latencies; documents overlap, so this exceeds
+        # the wall time whenever document_concurrency > 1.
         "elapsed_seconds": round(sum(result.elapsed_seconds for result in results), 3),
+        "wall_seconds": round(time.monotonic() - run_started, 3),
     }
     output.mkdir(parents=True, exist_ok=True)
     (output / f"summary-{split}.json").write_text(

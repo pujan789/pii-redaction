@@ -1,3 +1,4 @@
+import json
 import threading
 from pathlib import Path
 
@@ -88,6 +89,10 @@ def test_run_evaluation_processes_documents_concurrently(tmp_path: Path) -> None
     )
     assert len(results) == 2
     assert all(result.passed_automatic_checks for result in results)
+    summary = json.loads((tmp_path / "out" / "summary-tuning.json").read_text())
+    # Throughput must come from wall time; per-document times overlap under
+    # concurrency, so their sum overstates the elapsed run.
+    assert 0 < summary["wall_seconds"] < summary["elapsed_seconds"]
 
 
 def test_evaluate_entry_records_failure_for_unreadable_source(tmp_path: Path) -> None:

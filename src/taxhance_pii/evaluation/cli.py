@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Literal, cast
 
@@ -148,14 +149,15 @@ def run() -> None:
     manifest = load_manifest(arguments.manifest)
     detector = TextAnchoredDetector(settings)
     detector.preflight()
+    started = time.monotonic()
     results = run_evaluation(manifest, split, settings, detector, arguments.output)
+    wall = time.monotonic() - started
     passed = sum(item.passed_automatic_checks for item in results)
     pages = sum(item.page_count for item in results)
-    seconds = sum(item.elapsed_seconds for item in results)
-    rate = pages / seconds * 3600 if seconds else 0.0
+    rate = pages / wall * 3600 if wall else 0.0
     print(
         f"Completed {len(results)} private PDFs; {passed} passed automatic residual "
-        f"checks; {pages} pages in {seconds:.0f}s = {rate:.0f} pages/hour."
+        f"checks; {pages} pages in {wall:.0f}s wall = {rate:.0f} pages/hour."
     )
 
 
