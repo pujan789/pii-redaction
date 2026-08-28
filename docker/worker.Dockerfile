@@ -7,7 +7,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/models/huggingface
+    HF_HOME=/models/huggingface \
+    # Tesseract's OpenMP threads spin-wait and collapse under concurrent page
+    # OCR on small hosts; one thread per process keeps parallel OCR linear.
+    OMP_THREAD_LIMIT=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr \

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,18 @@ from PIL import Image, ImageSequence, UnidentifiedImageError
 from pytesseract import Output
 
 from taxhance_pii.domain import BoundingBox
+
+
+def _limit_tesseract_threads() -> None:
+    # Tesseract's OpenMP build spin-waits across its worker threads, so
+    # concurrent page OCR collapses on small hosts (measured 112x slower for
+    # three parallel pages on 4 vCPUs) while output is identical. One OMP
+    # thread per tesseract process keeps parallel OCR linear; an operator can
+    # still override the limit through the environment.
+    os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+
+_limit_tesseract_threads()
 
 
 class DocumentError(RuntimeError):
