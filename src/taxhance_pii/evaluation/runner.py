@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -241,30 +243,35 @@ def run_evaluation(
             raise ValueError("evaluation_checkpoint_invalid")
         results_by_id[result.evaluation_id] = result
 
-    for index, entry in enumerate(entries, start=1):
-        if entry.evaluation_id in results_by_id:
+    for _ in results_by_id:
+        logger.info(
+            "evaluation_resume_skip",
+            extra={"split": split, "completed": len(results_by_id), "total": len(entries)},
+        )
+    pending = [entry for entry in entries if entry.evaluation_id not in results_by_id]
+    state_lock = threading.Lock()
+
+    def _process(entry: SampleEntry) -> None:
+        result = evaluate_entry(entry, settings, detector, paths)
+        # Checkpoint callbacks and shared bookkeeping are serialized; only the
+        # document work itself runs in parallel.
+        with state_lock:
+            if on_result is not None:
+                on_result(result, paths.document(entry.evaluation_id))
+            results_by_id[entry.evaluation_id] = result
             logger.info(
-                "evaluation_resume_skip",
+                "evaluation_progress",
                 extra={
                     "split": split,
-                    "completed": index,
+                    "completed": len(results_by_id),
                     "total": len(entries),
+                    "passed": result.passed_automatic_checks,
                 },
             )
-            continue
-        result = evaluate_entry(entry, settings, detector, paths)
-        if on_result is not None:
-            on_result(result, paths.document(entry.evaluation_id))
-        results_by_id[entry.evaluation_id] = result
-        logger.info(
-            "evaluation_progress",
-            extra={
-                "split": split,
-                "completed": index,
-                "total": len(entries),
-                "passed": result.passed_automatic_checks,
-            },
-        )
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=settings.document_concurrency) as pool:
+            list(pool.map(_process, pending))
     results = [results_by_id[entry.evaluation_id] for entry in entries]
     summary = {
         "run_id": str(uuid.uuid4()),

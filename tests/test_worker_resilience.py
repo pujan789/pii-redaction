@@ -93,6 +93,34 @@ def test_sqs_renew_uses_full_visibility_timeout() -> None:
     ]
 
 
+def test_worker_runs_document_loops_concurrently(monkeypatch: MonkeyPatch) -> None:
+    import threading
+
+    barrier = threading.Barrier(2)
+    met = threading.Event()
+
+    def fake_run_once(pipeline: object) -> bool:
+        del pipeline
+        barrier.wait(timeout=10)
+        met.set()
+        worker_main.stopping = True
+        return True
+
+    monkeypatch.setattr(worker_main, "run_once", fake_run_once)
+    monkeypatch.setattr(
+        worker_main,
+        "get_container",
+        lambda: SimpleNamespace(
+            settings=SimpleNamespace(runtime="aws", worker_poll_seconds=0.1)
+        ),
+    )
+    monkeypatch.setattr(worker_main, "stopping", False)
+
+    worker_main._run_loops(pipeline=None, concurrency=2)  # type: ignore[arg-type]
+
+    assert met.is_set()
+
+
 def test_redelivered_message_reclaims_interrupted_job(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:

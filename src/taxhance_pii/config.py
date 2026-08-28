@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     vllm_gpu_memory_utilization: float = Field(default=0.90, ge=0.3, le=0.98)
     vllm_startup_timeout_seconds: int = Field(default=600, ge=60, le=1_800)
     detector_concurrency: int = Field(default=8, ge=1, le=64)
+    # Documents processed in parallel by the worker and the evaluation runner.
+    # CPU stages (render, OCR, residual checks) dominate per-document time, so
+    # overlapping documents keeps the GPU fed; bounded low because each
+    # document holds all rendered pages in memory.
+    document_concurrency: int = Field(default=3, ge=1, le=8)
     render_dpi: int = Field(default=200, ge=96, le=400)
     ocr_enabled: bool = True
     worker_poll_seconds: float = Field(default=2.0, ge=0.1, le=60)

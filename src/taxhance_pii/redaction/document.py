@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -203,9 +204,15 @@ def load_document(
         _render_pdf(path, dpi, max_pages) if extension == ".pdf" else _render_image(path, max_pages)
     )
     if ocr:
-        for page in pages:
-            if text_layer_is_garbage(page.words):
-                page.words = ocr_words(page.image)
+        targets = [page for page in pages if text_layer_is_garbage(page.words)]
+        if targets:
+            # Tesseract runs as a subprocess pinned to one OMP thread, so
+            # pages OCR in parallel across cores instead of one at a time.
+            workers = min(len(targets), max(1, os.cpu_count() or 1))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                extracted = list(pool.map(lambda page: ocr_words(page.image), targets))
+            for page, words in zip(targets, extracted, strict=True):
+                page.words = words
     return pages
 
 

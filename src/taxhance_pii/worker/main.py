@@ -103,6 +103,35 @@ def run_once(pipeline: WorkerPipeline) -> bool:
     return True
 
 
+def _run_loop(pipeline: WorkerPipeline) -> None:
+    global stopping
+    container = get_container()
+    try:
+        while not stopping:
+            worked = run_once(pipeline)
+            if not worked and container.settings.runtime == "local":
+                time.sleep(container.settings.worker_poll_seconds)
+    except BaseException:
+        # One broken loop stops the whole worker so the process restarts
+        # cleanly instead of running half-crewed.
+        stopping = True
+        raise
+
+
+def _run_loops(pipeline: WorkerPipeline, concurrency: int) -> None:
+    # CPU stages (render, OCR, residual checks) dominate a document, so
+    # several documents in flight keep the GPU fed. run_once stays serial per
+    # loop; SQS claiming and the repository conditional update arbitrate jobs.
+    threads = [
+        threading.Thread(target=_run_loop, args=(pipeline,), name=f"doc-loop-{index}")
+        for index in range(concurrency)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+
 def run() -> None:
     container = get_container()
     configure_logging(container.settings.log_level)
@@ -121,10 +150,7 @@ def run() -> None:
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
     logger.info("worker_started", extra={"runtime": container.settings.runtime})
-    while not stopping:
-        worked = run_once(pipeline)
-        if not worked and container.settings.runtime == "local":
-            time.sleep(container.settings.worker_poll_seconds)
+    _run_loops(pipeline, container.settings.document_concurrency)
 
 
 if __name__ == "__main__":

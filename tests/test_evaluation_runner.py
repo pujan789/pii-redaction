@@ -1,10 +1,12 @@
+import threading
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 from taxhance_pii.config import Settings
-from taxhance_pii.evaluation.corpus import SampleEntry
-from taxhance_pii.evaluation.runner import EvaluationPaths, evaluate_entry
+from taxhance_pii.domain import utc_now
+from taxhance_pii.evaluation.corpus import SampleEntry, SampleManifest
+from taxhance_pii.evaluation.runner import EvaluationPaths, evaluate_entry, run_evaluation
 from taxhance_pii.worker.detector import NoopDetector
 
 
@@ -48,6 +50,44 @@ def test_evaluate_entry_produces_outputs_and_passes(tmp_path: Path) -> None:
     assert result.residual_deterministic == 0
     assert result.passed_automatic_checks is True
     assert result.error_code is None
+
+
+class _BarrierDetector(NoopDetector):
+    """Passes only when two documents are detected at the same time."""
+
+    def __init__(self) -> None:
+        self.barrier = threading.Barrier(2)
+
+    def detect_document(self, pages: object) -> list[object]:
+        self.barrier.wait(timeout=10)
+        return []
+
+
+def test_run_evaluation_processes_documents_concurrently(tmp_path: Path) -> None:
+    entries = []
+    for index in range(2):
+        pdf = tmp_path / f"doc-{index}.pdf"
+        _make_pdf(pdf)
+        entries.append(
+            _entry(pdf).model_copy(update={"evaluation_id": f"eval-conc-{index:04d}"})
+        )
+    manifest = SampleManifest(
+        created_at=utc_now(),
+        seed="test",
+        corpus_file_count=2,
+        entries=entries,
+    )
+    settings = Settings(
+        token_pepper="x" * 40,
+        data_dir=tmp_path,
+        ocr_enabled=False,
+        document_concurrency=2,
+    )
+    results = run_evaluation(
+        manifest, "tuning", settings, _BarrierDetector(), tmp_path / "out"
+    )
+    assert len(results) == 2
+    assert all(result.passed_automatic_checks for result in results)
 
 
 def test_evaluate_entry_records_failure_for_unreadable_source(tmp_path: Path) -> None:
