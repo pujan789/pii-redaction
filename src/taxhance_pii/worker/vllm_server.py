@@ -27,6 +27,10 @@ def build_command(settings: Settings) -> list[str]:
         str(settings.vllm_max_model_len),
         "--gpu-memory-utilization",
         str(settings.vllm_gpu_memory_utilization),
+        # Prompts contain document text; request logging must stay off even if
+        # a future vLLM changes the default (privacy contract: no document
+        # text in logs).
+        "--no-enable-log-requests",
     ]
 
 
