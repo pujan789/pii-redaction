@@ -21,7 +21,7 @@ RUN apt-get update \
     && chown -R pii:pii /models /home/pii
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir ".[worker]"
 
