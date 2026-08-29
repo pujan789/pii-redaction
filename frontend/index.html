@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PII Redaction for CPA Firms | Taxhance</title>
+    <meta
+      name="description"
+      content="Remove client SSNs, names, and addresses from tax documents before they reach ChatGPT or any AI tool. Free, no signup, files deleted after download. Open source and self-hostable."
+    />
+    <link rel="canonical" href="https://taxhance.com/pii-redaction/" />
+    <meta name="theme-color" content="#4f46e5" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Taxhance" />
+    <meta property="og:title" content="Making tax documents safe for AI" />
+    <meta
+      property="og:description"
+      content="PII redaction for CPA firms. Free, no signup, and deleted after download or within one hour. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in the USA, never through a third-party AI API."
+    />
+    <meta property="og:url" content="https://taxhance.com/pii-redaction/" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="stylesheet" href="./landing.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Taxhance PII Redaction",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "url": "https://taxhance.com/pii-redaction/",
+        "description": "PII redaction for CPA and tax firms. Removes client identifiers from tax documents before they are shared with AI tools. Every redaction is human-reviewed.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "license": "https://www.gnu.org/licenses/agpl-3.0.html"
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is my data used to train AI models?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in the USA, your documents never reach OpenAI, Google, or another AI vendor, and every file is deleted after download or within one hour."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What exactly happens to my file?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "It's uploaded over TLS, processed once for your job only, and deleted the moment you download the redacted result, or one hour after upload, whichever comes first. Logs never contain filenames, document text, or detected PII."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Which documents does it handle?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "PDFs and scans (PNG, JPEG, TIFF) up to 50 MB: 1040s, W-2s, 1099s, K-1s, and anything else in a client file. The default policy removes the taxpayer's and recipient's identifiers and keeps payer, employer, and amount fields. You can change any box before download."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can my firm self-host it?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The pipeline is licensed under AGPL-3.0 with a noncommercial private-use exception and runs with Docker Compose on your own GPU, so client documents never leave your network."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is it really free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The hosted service is free with no signup, credit card, account tiers, or feature tiers. File, page, request, and queue guardrails exist only to prevent abuse."
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap nav">
+        <a class="wordmark" href="https://taxhance.com/">
+          <img class="wordmark-logo" src="/taxhance-logo.png" alt="Taxhance" />
+          <span class="wordmark-tag">PII Redaction</span>
+        </a>
+        <nav class="nav-links" aria-label="Page sections">
+          <a href="#how-it-works">How it works</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#open-source">Open source</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div class="nav-actions">
+          <a class="btn btn-primary" href="./app/">Start redacting</a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- Hero -->
+      <section class="hero">
+        <div class="blob blob-a" aria-hidden="true"></div>
+        <div class="blob blob-b" aria-hidden="true"></div>
+        <div class="wrap hero-center">
+          <a class="badge" href="#open-source">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l-3 3 3 3m8-6l3 3-3 3" />
+            </svg>
+            Open source and self-hostable
+          </a>
+          <h1>Making tax documents<br /><span class="grad">safe for AI</span></h1>
+          <p class="sub">
+            Taxhance covers the client's personal details on a tax document, shows you every box
+            for review, and gives you a clean PDF you can paste into ChatGPT, Claude, or any
+            other AI tool.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary btn-lg" href="./app/">Redact a document <span class="arrow" aria-hidden="true">&rarr;</span></a>
+            <a class="btn btn-outline btn-lg" href="#open-source">View the source</a>
+          </div>
+          <ul class="trust-strip">
+            <li>No signup</li>
+            <li>No credit card</li>
+            <li>No feature tiers</li>
+            <li>Deleted after download or within 1 hour</li>
+          </ul>
+
+          <!-- Signature: a W-2 that redacts itself. The client's fields go
+               black; employer fields and amounts stay visible, exactly like
+               the default policy. -->
+          <figure class="docdemo" aria-label="Animation of a W-2 having personal information redacted">
+            <div class="doc">
+              <div class="doc-head">
+                <span class="doc-title">Form W-2 &middot; Wage and Tax Statement</span>
+                <span class="doc-year">2025</span>
+              </div>
+              <div class="doc-body">
+                <div class="doc-row">
+                  <span class="doc-label">a &nbsp;Employee's social security number</span>
+                  <span class="doc-value pii pii-1">123-45-6789</span>
+                </div>
+                <div class="doc-cols">
+                  <div class="doc-row">
+                    <span class="doc-label">b &nbsp;Employer identification number</span>
+                    <span class="doc-value">84-1234567</span>
+                  </div>
+                  <div class="doc-row">
+                    <span class="doc-label">e &nbsp;Employee's name</span>
+                    <span class="doc-value pii pii-2">MORGAN A SAMPLE</span>
+                  </div>
+                </div>
+                <div class="doc-row">
+                  <span class="doc-label">c &nbsp;Employer's name and address</span>
+                  <span class="doc-value">BRIGHTON &amp; LOWE LLP, NEW YORK NY 10018</span>
+                </div>
+                <div class="doc-row">
+                  <span class="doc-label">f &nbsp;Employee's address</span>
+                  <span class="doc-value"><span class="pii pii-3">88 MAPLE STREET</span>, SPRINGFIELD IL 62704</span>
+                </div>
+                <div class="doc-cols">
+                  <div class="doc-row">
+                    <span class="doc-label">1 &nbsp;Wages, tips, other comp.</span>
+                    <span class="doc-value">84,210.55</span>
+                  </div>
+                  <div class="doc-row">
+                    <span class="doc-label">2 &nbsp;Federal income tax withheld</span>
+                    <span class="doc-value">9,644.00</span>
+                  </div>
+                </div>
+              </div>
+              <div class="doc-foot">
+                <span class="gpu-label">Qwen3-VL-8B-Instruct &middot; SOC 2 infrastructure</span>
+                <span class="ready-label" role="status"><span class="tick" aria-hidden="true">&#10003;</span> AI-ready &middot; 3 redactions reviewed</span>
+              </div>
+              <div class="scanline" aria-hidden="true"></div>
+            </div>
+            <figcaption class="doc-caption">
+              The employer's details and the amounts stay. Only the client's identifiers are covered.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- Problem strip -->
+      <section class="section problem">
+        <div class="wrap">
+          <div class="problem-panel">
+            <p>
+              Every 1040, W-2, and 1099 in your firm names the client, their address, and their
+              SSN. A model that summarizes the return only needs the numbers. It never needs
+              <span class="redacted">Morgan's home address</span> or
+              <span class="redacted">a Social Security number</span>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- How it works -->
+      <section class="section" id="how-it-works">
+        <div class="wrap">
+          <div class="sec-head">
+            <span class="eyebrow">How it works</span>
+            <h2>Three steps, then the file is gone</h2>
+          </div>
+          <ol class="steps">
+            <li class="step">
+              <span class="step-num">01</span>
+              <h3>Upload</h3>
+              <p>
+                Drop in a PDF or a scan. It's processed once, for this job only, and it never
+                joins a training set.
+              </p>
+            </li>
+            <li class="step">
+              <span class="step-num">02</span>
+              <h3>Review</h3>
+              <p>
+                Qwen3-VL-8B-Instruct and deterministic detectors propose every redaction box.
+                You approve, adjust, or add boxes before anything is final.
+              </p>
+            </li>
+            <li class="step">
+              <span class="step-num">03</span>
+              <h3>Download</h3>
+              <p>
+                You get a flattened, raster-only PDF. Covered text, hidden layers, and metadata
+                are unrecoverable, and your original is deleted.
+              </p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Privacy contract -->
+      <section class="section privacy" id="privacy">
+        <div class="wrap">
+          <div class="sec-head">
+            <span class="eyebrow">The privacy contract</span>
+            <h2>Built like you'd build it for your own clients</h2>
+          </div>
+          <div class="privacy-grid">
+            <article class="pledge">
+              <h3>Our bare metal, not their API</h3>
+              <p>
+                The model runs on a dedicated GPU worker in the USA. Your documents never
+                reach OpenAI, Google, or another AI vendor.
+              </p>
+            </article>
+            <article class="pledge">
+              <h3>Processed once, then gone</h3>
+              <p>
+                Files are deleted the moment you download the result, and no later than one
+                hour after upload in any case.
+              </p>
+            </article>
+            <article class="pledge">
+              <h3>Logs that can't leak</h3>
+              <p>
+                Application logs hold job IDs and counters. Never filenames, document text, or
+                detected PII.
+              </p>
+            </article>
+            <article class="pledge">
+              <h3>No accounts to breach</h3>
+              <p>
+                Each job lives behind its own unguessable link. There is no user directory and
+                no shared document index.
+              </p>
+            </article>
+            <article class="pledge">
+              <h3>SOC 2 compliant infrastructure</h3>
+              <p>
+                Your documents are processed and stored on SOC 2 compliant infrastructure in
+                the USA. Encrypted from upload to deletion: TLS 1.2+ in transit, AES-256 at
+                rest.
+              </p>
+            </article>
+            <aside class="pledge pledge-honest">
+              <h3>The honest part</h3>
+              <p>
+                No automated system catches 100% of PII. Nothing leaves without your review,
+                and every proposed box is shown before download.
+              </p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- Open source -->
+      <section class="section" id="open-source">
+        <div class="wrap os-grid">
+          <div class="os-copy">
+            <div class="sec-head sec-head-left">
+              <span class="eyebrow">Open source</span>
+              <h2>Read it, change it, or run it yourself.</h2>
+            </div>
+            <p>
+              Don't take our word for any of this. Read the code: the detectors, the redaction
+              pipeline, and the deletion logic are all public.
+            </p>
+            <p>
+              Self-host the whole thing with Docker on your own GPU, and client documents never
+              leave your firm's network. Running it yourself is free, under the AGPL-3.0
+              license.
+            </p>
+            <a class="btn btn-outline" href="https://github.com/TaxHance/pii-redaction">Browse the code</a>
+          </div>
+          <div class="terminal" aria-hidden="true">
+            <div class="terminal-bar"><i></i><i></i><i></i></div>
+            <pre><code><span class="t-prompt">$</span> git clone https://github.com/taxhance/pii-redaction
+<span class="t-prompt">$</span> cd pii-redaction &amp;&amp; docker compose up
+<span class="t-dim"># redacting at http://localhost:8080</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pricing -->
+      <section class="section pricing" id="pricing">
+        <div class="wrap">
+          <div class="sec-head">
+            <span class="eyebrow">Pricing</span>
+            <h2>Free. No accounts and no feature tiers.</h2>
+          </div>
+          <div class="price-grid">
+            <article class="price-card">
+              <h3>Anonymous</h3>
+              <p class="price">$0 <span>forever</span></p>
+              <ul>
+                <li>No signup, no credit card</li>
+                <li>Every feature included</li>
+                <li>Guardrails only to prevent abuse</li>
+                <li>Same privacy contract</li>
+              </ul>
+              <a class="btn btn-outline" href="./app/">Start redacting</a>
+            </article>
+            <article class="price-card price-card-hi">
+              <span class="price-chip">Your infrastructure</span>
+              <h3>Self-hosted</h3>
+              <p class="price">$0 <span>software</span></p>
+              <ul>
+                <li>Docker Compose setup</li>
+                <li>Use your own GPU and storage</li>
+                <li>Set the capacity you need</li>
+                <li>Documents stay on your network</li>
+              </ul>
+              <a class="btn btn-primary" href="https://github.com/TaxHance/pii-redaction">View self-hosting guide</a>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="section faq" id="faq">
+        <div class="wrap wrap-narrow">
+          <div class="sec-head">
+            <span class="eyebrow">FAQ</span>
+            <h2>The questions your engagement letter would ask</h2>
+          </div>
+          <details>
+            <summary>Is my data used to train AI models?</summary>
+            <p>
+              No. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in
+              the USA, your documents never reach OpenAI, Google, or another AI vendor, and
+              every file is deleted after download or within one hour.
+            </p>
+          </details>
+          <details>
+            <summary>What exactly happens to my file?</summary>
+            <p>
+              It's uploaded over TLS, processed once for your job only, and deleted the moment
+              you download the redacted result, or one hour after upload, whichever comes
+              first. Logs never contain filenames, document text, or detected PII.
+            </p>
+          </details>
+          <details>
+            <summary>Which documents does it handle?</summary>
+            <p>
+              PDFs and scans (PNG, JPEG, TIFF) up to 50 MB: 1040s, W-2s, 1099s, K-1s, and
+              anything else in a client file. The default policy removes the taxpayer's and
+              recipient's identifiers and keeps payer, employer, and amount fields. You can
+              change any box before download.
+            </p>
+          </details>
+          <details>
+            <summary>Can my firm self-host it?</summary>
+            <p>
+              Yes. The pipeline is licensed under AGPL-3.0 with a noncommercial private-use
+              exception and runs with Docker Compose on your own GPU, so client documents never
+              leave your network.
+            </p>
+          </details>
+          <details>
+            <summary>Is it really free?</summary>
+            <p>
+              Yes. The hosted service is free with no signup, credit card, account tiers, or
+              feature tiers. File, page, request, and queue guardrails exist only to prevent abuse.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <!-- Closing CTA -->
+      <section class="section closer">
+        <div class="wrap closer-panel">
+          <h2>The next document you send to AI shouldn't know who it's about.</h2>
+          <a class="btn btn-primary btn-lg" href="./app/">Redact a document <span class="arrow" aria-hidden="true">&rarr;</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap footer-grid">
+        <div>
+          <a class="wordmark" href="https://taxhance.com/">
+            <img class="wordmark-logo" src="/taxhance-logo.png" alt="Taxhance" />
+            <span class="wordmark-tag">PII Redaction</span>
+          </a>
+          <p class="footer-note">Making tax documents safe for AI.</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="#how-it-works">How it works</a>
+          <a href="#privacy">Privacy</a>
+          <a href="#open-source">Open source</a>
+          <a href="#pricing">Pricing</a>
+          <a href="https://taxhance.com/">Taxhance home</a>
+        </nav>
+      </div>
+      <div class="wrap footer-legal">
+        <span>&copy; 2026 Taxhance</span>
+        <span>AGPL-3.0 with a noncommercial private-use exception</span>
+      </div>
+    </footer>
+  </body>
+</html>

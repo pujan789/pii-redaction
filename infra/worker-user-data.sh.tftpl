@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+echo 'ECS_CLUSTER=${cluster_name}' >> /etc/ecs/ecs.config
+%{ if gpu_support ~}
+echo 'ECS_ENABLE_GPU_SUPPORT=true' >> /etc/ecs/ecs.config
+%{ endif ~}
+mkdir -p /opt/pii-model-cache
+chown -R 10001:10001 /opt/pii-model-cache
+chmod 0750 /opt/pii-model-cache

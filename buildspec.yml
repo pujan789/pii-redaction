@@ -1,0 +1,42 @@
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - test -n "${IMAGE_TAG:-}"
+      - test "${BUILD_TARGET}" = "all" -o "${BUILD_TARGET}" = "lambda" -o "${BUILD_TARGET}" = "worker"
+      - REGISTRY="${LAMBDA_REPOSITORY%%/*}"
+      - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | docker login --username AWS --password-stdin "${REGISTRY}"
+  build:
+    commands:
+      - |
+        if [[ "${BUILD_TARGET}" == "all" || "${BUILD_TARGET}" == "lambda" ]]; then
+          docker build --pull --file docker/lambda.Dockerfile --tag "${LAMBDA_REPOSITORY}:${IMAGE_TAG}" .
+        fi
+      - |
+        if [[ "${BUILD_TARGET}" == "all" || "${BUILD_TARGET}" == "worker" ]]; then
+          if [[ -n "${BASE_WORKER_IMAGE:-}" ]]; then
+            docker pull "${BASE_WORKER_IMAGE}"
+            docker build --file docker/worker-overlay.Dockerfile \
+              --build-arg "WORKER_BASE=${BASE_WORKER_IMAGE}" \
+              --tag "${WORKER_REPOSITORY}:${IMAGE_TAG}" .
+          else
+            docker build --pull --file docker/worker.Dockerfile --tag "${WORKER_REPOSITORY}:${IMAGE_TAG}" .
+          fi
+        fi
+  post_build:
+    commands:
+      - test "${CODEBUILD_BUILD_SUCCEEDING}" = "1"
+      - |
+        if [[ "${BUILD_TARGET}" == "all" || "${BUILD_TARGET}" == "lambda" ]]; then
+          docker push "${LAMBDA_REPOSITORY}:${IMAGE_TAG}"
+        fi
+      - |
+        if [[ "${BUILD_TARGET}" == "all" || "${BUILD_TARGET}" == "worker" ]]; then
+          docker push "${WORKER_REPOSITORY}:${IMAGE_TAG}"
+        fi
+      - printf '{"image_tag":"%s","target":"%s"}\n' "${IMAGE_TAG}" "${BUILD_TARGET}"
