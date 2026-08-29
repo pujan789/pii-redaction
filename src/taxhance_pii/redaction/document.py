@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,11 @@ class DocumentError(RuntimeError):
 
 MAX_PAGE_RENDER_PIXELS = 24_000_000
 MAX_DOCUMENT_RENDER_PIXELS = 1_300_000_000
+
+# PDFium is not thread-safe and pypdfium2 adds no synchronization; concurrent
+# renders from separate documents segfault inside libpdfium. Every pdfium call
+# in the codebase must hold this lock.
+PDFIUM_LOCK = threading.Lock()
 
 
 def _add_pixel_budget(page_pixels: int, accumulated_pixels: int) -> int:
@@ -144,11 +150,12 @@ def ocr_words(image: Image.Image) -> list[WordBox]:
 
 
 def _render_pdf(path: Path, dpi: int, max_pages: int) -> list[PageArtifact]:
-    try:
-        document = pdfium.PdfDocument(path)
-    except Exception as exc:
-        raise DocumentError("pdf_unreadable") from exc
-    page_count = len(document)
+    with PDFIUM_LOCK:
+        try:
+            document = pdfium.PdfDocument(path)
+        except Exception as exc:
+            raise DocumentError("pdf_unreadable") from exc
+        page_count = len(document)
     if page_count < 1:
         raise DocumentError("document_empty")
     if page_count > max_pages:
@@ -159,18 +166,20 @@ def _render_pdf(path: Path, dpi: int, max_pages: int) -> list[PageArtifact]:
     total_pixels = 0
     try:
         for index in range(page_count):
-            page = document[index]
-            width_points, height_points = page.get_size()
-            projected_pixels = int(width_points * scale) * int(height_points * scale)
-            total_pixels = _add_pixel_budget(projected_pixels, total_pixels)
-            image = page.render(scale=scale, rotation=0).to_pil().convert("RGB")
+            with PDFIUM_LOCK:
+                page = document[index]
+                width_points, height_points = page.get_size()
+                projected_pixels = int(width_points * scale) * int(height_points * scale)
+                total_pixels = _add_pixel_budget(projected_pixels, total_pixels)
+                image = page.render(scale=scale, rotation=0).to_pil().convert("RGB")
             pages.append(PageArtifact(index, image, extracted_words[index]))
     except DocumentError:
         raise
     except Exception as exc:
         raise DocumentError("pdf_render_failed") from exc
     finally:
-        document.close()
+        with PDFIUM_LOCK:
+            document.close()
     return pages
 
 

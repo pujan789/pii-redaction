@@ -9,7 +9,7 @@ import pypdfium2 as pdfium
 from PIL import Image, ImageDraw
 
 from taxhance_pii.domain import Detection
-from taxhance_pii.redaction.document import PageArtifact
+from taxhance_pii.redaction.document import PDFIUM_LOCK, PageArtifact
 
 
 class RedactionValidationError(RuntimeError):
@@ -73,10 +73,12 @@ def validate_flattened_pdf(
     if any(marker in raw for marker in forbidden_markers):
         raise RedactionValidationError("output_contains_active_content")
     try:
-        document = pdfium.PdfDocument(path)
-        if len(document) != expected_pages:
+        with PDFIUM_LOCK:
+            document = pdfium.PdfDocument(path)
+            page_total = len(document)
+            document.close()
+        if page_total != expected_pages:
             raise RedactionValidationError("output_page_count_mismatch")
-        document.close()
         with pdfplumber.open(path) as output:
             if any((page.extract_text() or "").strip() for page in output.pages):
                 raise RedactionValidationError("output_contains_text_layer")
@@ -86,7 +88,8 @@ def validate_flattened_pdf(
         raise RedactionValidationError("output_validation_failed") from exc
 
     # Pixel-level verification ensures every requested region was actually painted black.
-    check_document = pdfium.PdfDocument(path)
+    with PDFIUM_LOCK:
+        check_document = pdfium.PdfDocument(path)
     try:
         for page_index in range(expected_pages):
             page_detections = [item for item in detections if item.page_index == page_index]
@@ -95,7 +98,8 @@ def validate_flattened_pdf(
             # Scale 2 (144 dpi) keeps a minimum-size 1-thousandth box at >=1
             # rendered pixel; at scale 1 both edges can round to the same pixel
             # and a correctly painted box would fail as empty.
-            image = check_document[page_index].render(scale=2).to_pil().convert("RGB")
+            with PDFIUM_LOCK:
+                image = check_document[page_index].render(scale=2).to_pil().convert("RGB")
             for detection in page_detections:
                 crop = image.crop(_pixel_box(detection, image, padding_pixels=0))
                 if crop.width == 0 or crop.height == 0:
@@ -105,7 +109,8 @@ def validate_flattened_pdf(
                 if dark_ratio < 0.96:
                     raise RedactionValidationError("redaction_pixels_not_opaque")
     finally:
-        check_document.close()
+        with PDFIUM_LOCK:
+            check_document.close()
 
 
 def redacted_preview(image: Image.Image, detections: list[Detection]) -> bytes:
@@ -126,11 +131,12 @@ def flattened_audit_image(image: Image.Image, dpi: int) -> Image.Image:
         quality=95,
         optimize=True,
     )
-    document = pdfium.PdfDocument(encoded.getvalue())
-    try:
-        return cast(Image.Image, document[0].render(scale=dpi / 72).to_pil().convert("RGB"))
-    finally:
-        document.close()
+    with PDFIUM_LOCK:
+        document = pdfium.PdfDocument(encoded.getvalue())
+        try:
+            return cast(Image.Image, document[0].render(scale=dpi / 72).to_pil().convert("RGB"))
+        finally:
+            document.close()
 
 
 def redact_image(image: Image.Image, detections: list[Detection]) -> Image.Image:
