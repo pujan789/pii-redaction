@@ -31,7 +31,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[worker]" \
+    # The OS upgrade restores Ubuntu's PEP 668 marker; this image manages
+    # Python system-wide exactly like its vLLM base does.
+RUN pip install --no-cache-dir --break-system-packages ".[worker]" \
     # Fail the build here if purging the audio/video libraries broke any
     # import the worker actually relies on.
     && python3 -c "import vllm; import taxhance_pii.worker.main"
