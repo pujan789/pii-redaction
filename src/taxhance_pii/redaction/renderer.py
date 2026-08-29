@@ -61,11 +61,23 @@ def render_redacted_pdf(
             image.close()
 
 
+# Nothing legible is shorter than ~1.6pt (2 thousandths of a letter page); a
+# thinner box means broken source glyph geometry, and painting it draws a
+# strikethrough that leaves the value readable.
+MIN_BOX_THOUSANDTHS = 2
+
+
 def validate_flattened_pdf(
     path: Path,
     expected_pages: int,
     detections: list[Detection],
 ) -> None:
+    for detection in detections:
+        if (
+            detection.box.y2 - detection.box.y1 < MIN_BOX_THOUSANDTHS
+            or detection.box.x2 - detection.box.x1 < MIN_BOX_THOUSANDTHS
+        ):
+            raise RedactionValidationError("degenerate_redaction_box")
     raw = path.read_bytes()
     if not raw.startswith(b"%PDF-"):
         raise RedactionValidationError("output_not_pdf")

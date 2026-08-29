@@ -3,11 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pdfplumber
+import pytest
 from PIL import Image, ImageDraw
 
 from taxhance_pii.domain import BoundingBox, Detection, PiiCategory
 from taxhance_pii.redaction.document import PageArtifact
-from taxhance_pii.redaction.renderer import flattened_audit_image, render_redacted_pdf
+from taxhance_pii.redaction.renderer import (
+    RedactionValidationError,
+    flattened_audit_image,
+    render_redacted_pdf,
+)
 
 
 def test_renderer_builds_textless_pdf_with_opaque_box(tmp_path: Path) -> None:
@@ -28,16 +33,32 @@ def test_renderer_builds_textless_pdf_with_opaque_box(tmp_path: Path) -> None:
         assert document.pages[0].extract_text() in {None, ""}
 
 
-def test_minimum_height_box_survives_pixel_verification(tmp_path: Path) -> None:
-    # A 1-thousandth-tall box on a letter page rounds to zero pixels at a
-    # 72-dpi verification render even though the paint at 300 dpi covered it;
-    # verification must never fail a box the renderer actually painted.
+def test_sliver_box_from_broken_glyph_metrics_fails_closed(tmp_path: Path) -> None:
+    # A 1-thousandth-tall box comes from a text layer with broken glyph
+    # heights; painting it draws a strikethrough that leaves the value
+    # readable, so the document must fail instead of shipping.
     image = Image.new("RGB", (2550, 3300), "white")
     detection = Detection(
         id="sliver",
         page_index=0,
         category=PiiCategory.SSN,
         box=BoundingBox(x1=100, y1=507, x2=600, y2=508),
+        confidence=1,
+        source="regex",
+    )
+    output = tmp_path / "redacted.pdf"
+    with pytest.raises(RedactionValidationError, match="degenerate_redaction_box"):
+        render_redacted_pdf([PageArtifact(0, image, [])], [detection], output, dpi=300)
+
+
+def test_small_but_sane_box_survives_pixel_verification(tmp_path: Path) -> None:
+    # Small legitimate text must still verify; only degenerate slivers fail.
+    image = Image.new("RGB", (2550, 3300), "white")
+    detection = Detection(
+        id="small",
+        page_index=0,
+        category=PiiCategory.SSN,
+        box=BoundingBox(x1=100, y1=507, x2=600, y2=510),
         confidence=1,
         source="regex",
     )
