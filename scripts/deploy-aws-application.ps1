@@ -14,23 +14,11 @@ param(
     [ValidateSet(0, 1, 2)]
     [int]$GpuCapacityDesiredCount = 1,
 
-    [ValidateSet("transformers", "llama_cpp")]
-    [string]$ModelBackend = "transformers",
-
     [ValidatePattern("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]
-    [string]$ModelId = "Qwen/Qwen3.8-27B",
+    [string]$ModelId = "google/gemma-4-E2B-it",
 
     [ValidatePattern("^[0-9a-f]{40}$")]
-    [string]$ModelRevision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
-
-    [ValidateSet("bfloat16", "float16", "4bit")]
-    [string]$ModelDtype = "4bit",
-
-    [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9._-]*$")]
-    [string]$LlamaModelFile = "gemma-4-E2B-it-UD-Q4_K_XL.gguf",
-
-    [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9._-]*$")]
-    [string]$LlamaMmprojFile = "mmproj-F16.gguf",
+    [string]$ModelRevision = "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
 
     [switch]$EvaluationCpuFallback,
 
@@ -110,12 +98,8 @@ $planArguments = @(
     "-var=worker_image_uri=$workerImage",
     "-var=worker_service_desired_count=$WorkerDesiredCount",
     "-var=gpu_capacity_desired_count=$GpuCapacityDesiredCount",
-    "-var=model_backend=$ModelBackend",
     "-var=model_id=$ModelId",
     "-var=model_revision=$ModelRevision",
-    "-var=model_dtype=$ModelDtype",
-    "-var=llama_model_file=$LlamaModelFile",
-    "-var=llama_mmproj_file=$LlamaMmprojFile",
     "-var=evaluation_cpu_fallback=$($EvaluationCpuFallback.IsPresent.ToString().ToLowerInvariant())"
 )
 & $tofuCommand $chdirArgument @planArguments
@@ -163,7 +147,6 @@ $url = & $tofuCommand $chdirArgument output -raw application_url
     WorkerDesiredCount = $WorkerDesiredCount
     GpuCapacityDesiredCount = $GpuCapacityDesiredCount
     EvaluationCpuFallback = $EvaluationCpuFallback.IsPresent
-    ModelBackend = $ModelBackend
     ModelId = $ModelId
     ModelRevision = $ModelRevision
 } | ConvertTo-Json
