@@ -173,6 +173,17 @@ variable "budget_alert_email" {
   default     = ""
 }
 
+variable "worker_on_demand_percentage" {
+  description = "Percentage of worker capacity launched on-demand. 0 is spot-first; set 100 while regional GPU spot capacity is unavailable (observed 2026-08-29: g6/g5.xlarge spot unfulfillable in us-east-1 for hours)."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = contains([0, 100], var.worker_on_demand_percentage)
+    error_message = "worker_on_demand_percentage must be 0 (spot-first) or 100 (on-demand)."
+  }
+}
+
 variable "warm_window_start_cron" {
   description = "UTC cron: scale to 1 for the US business-hours warm window (07:00 ET)."
   type        = string

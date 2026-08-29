@@ -20,6 +20,9 @@ param(
     [ValidatePattern("^[0-9a-f]{40}$")]
     [string]$ModelRevision = "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
 
+    [ValidateSet(0, 100)]
+    [int]$WorkerOnDemandPercentage = 0,
+
     [switch]$EvaluationCpuFallback,
 
     [switch]$SkipFrontend,
@@ -100,6 +103,7 @@ $planArguments = @(
     "-var=gpu_capacity_desired_count=$GpuCapacityDesiredCount",
     "-var=model_id=$ModelId",
     "-var=model_revision=$ModelRevision",
+    "-var=worker_on_demand_percentage=$WorkerOnDemandPercentage",
     "-var=evaluation_cpu_fallback=$($EvaluationCpuFallback.IsPresent.ToString().ToLowerInvariant())"
 )
 & $tofuCommand $chdirArgument @planArguments
