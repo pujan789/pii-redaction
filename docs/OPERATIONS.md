@@ -38,6 +38,15 @@ interruptions are absorbed by the SQS visibility timeout: the job returns to
 the queue and the replacement instance reprocesses it. Terraform ignores
 `desired_capacity` drift so applies never fight the schedule.
 
+Regional GPU spot capacity can dry up entirely (observed 2026-08-29:
+g6/g5.xlarge spot unfulfillable in us-east-1 for hours; jobs then wait in the
+queue until they expire). When that happens, deploy with
+`-WorkerOnDemandPercentage 100` to run the worker on-demand, and return to `0`
+(spot-first) once spot capacity is back. The flag maps to the
+`worker_on_demand_percentage` variable, so the choice survives later applies;
+a CLI-only override of the ASG distribution is reverted by the next apply.
+Automatic spot-to-on-demand failover remains an open follow-up.
+
 The generated `*.cloudfront.net` hostname is a staging endpoint: AWS fixes its default
 certificate's minimum protocol at legacy TLSv1. Before public launch, issue or import an
 ACM certificate in `us-east-1`, set `cloudfront_alias` and
