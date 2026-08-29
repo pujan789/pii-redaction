@@ -13,6 +13,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OMP_THREAD_LIMIT=1
 
 RUN apt-get update \
+    # Pull Ubuntu security updates for the base image's OS packages; the
+    # deploy gate refuses images with critical findings.
+    && apt-get upgrade -y --no-install-recommends \
+    # The text-only worker needs no audio/video stack; the ffmpeg libraries
+    # ship in the vLLM base and carry recurring critical CVEs.
+    && apt-get purge -y ffmpeg 'libavcodec*' 'libavdevice*' 'libavfilter*' \
+        'libavformat*' 'libavutil*' 'libpostproc*' 'libswresample*' 'libswscale*' \
+    && apt-get autoremove -y \
     && apt-get install -y --no-install-recommends tesseract-ocr \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 pii \
@@ -23,7 +31,10 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[worker]"
+RUN pip install --no-cache-dir ".[worker]" \
+    # Fail the build here if purging the audio/video libraries broke any
+    # import the worker actually relies on.
+    && python3 -c "import vllm; import taxhance_pii.worker.main"
 
 COPY docker/worker-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
