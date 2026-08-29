@@ -1,0 +1,7 @@
+# Files executed on Linux hosts/containers must keep LF endings even when the
+# working tree lives on Windows; a CRLF shebang breaks the container entrypoint.
+*.sh text eol=lf
+*.sh.tftpl text eol=lf
+*.tftpl text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
