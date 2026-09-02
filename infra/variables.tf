@@ -184,6 +184,12 @@ variable "worker_on_demand_percentage" {
   }
 }
 
+variable "warm_window_enabled" {
+  description = "Create the daily scale-to-1 warm window. When false the worker stays at zero until the off-hours queue-depth alarm cold-starts it; the nightly scale-to-zero still runs. Off by default since 2026-09-02 to stop paying ~14 GPU-hours/day while the queue is idle."
+  type        = bool
+  default     = false
+}
+
 variable "warm_window_start_cron" {
   description = "UTC cron: scale to 1 for the US business-hours warm window (07:00 ET)."
   type        = string

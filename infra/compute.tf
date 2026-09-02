@@ -260,7 +260,7 @@ resource "aws_ecs_service" "worker" {
 }
 
 resource "aws_autoscaling_schedule" "warm_window_start" {
-  count                  = var.deploy_application ? 1 : 0
+  count                  = var.deploy_application && var.warm_window_enabled ? 1 : 0
   scheduled_action_name  = "warm-window-start"
   autoscaling_group_name = aws_autoscaling_group.worker[0].name
   recurrence             = var.warm_window_start_cron

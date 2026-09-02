@@ -25,6 +25,8 @@ param(
 
     [switch]$EvaluationCpuFallback,
 
+    [switch]$WarmWindow,
+
     [switch]$SkipFrontend,
 
     [switch]$Apply
@@ -104,7 +106,8 @@ $planArguments = @(
     "-var=model_id=$ModelId",
     "-var=model_revision=$ModelRevision",
     "-var=worker_on_demand_percentage=$WorkerOnDemandPercentage",
-    "-var=evaluation_cpu_fallback=$($EvaluationCpuFallback.IsPresent.ToString().ToLowerInvariant())"
+    "-var=evaluation_cpu_fallback=$($EvaluationCpuFallback.IsPresent.ToString().ToLowerInvariant())",
+    "-var=warm_window_enabled=$($WarmWindow.IsPresent.ToString().ToLowerInvariant())"
 )
 & $tofuCommand $chdirArgument @planArguments
 if ($LASTEXITCODE -ne 0) { throw "Application plan failed." }
@@ -151,6 +154,7 @@ $url = & $tofuCommand $chdirArgument output -raw application_url
     WorkerDesiredCount = $WorkerDesiredCount
     GpuCapacityDesiredCount = $GpuCapacityDesiredCount
     EvaluationCpuFallback = $EvaluationCpuFallback.IsPresent
+    WarmWindow = $WarmWindow.IsPresent
     ModelId = $ModelId
     ModelRevision = $ModelRevision
 } | ConvertTo-Json

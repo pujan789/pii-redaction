@@ -31,8 +31,13 @@ instance churn, then restore the release-time capacity after the evaluation sess
 The worker ASG is spot-first (`price-capacity-optimized` across g6.xlarge and
 g5.xlarge, capacity rebalance on). Two scheduled actions own desired capacity:
 scale to 1 at 11:00 UTC (07:00 ET) and to 0 at 01:00 UTC (21:00 ET) — a 14-hour
-warm window for US business hours. Overnight, an SQS queue-depth alarm
-(`offhours-queue-depth`) scales 0→1 when a job arrives; expect a cold start of a
+warm window for US business hours. The warm window is off by default
+(`warm_window_enabled = false`; the deploy flag `-WarmWindow` turns it on) since
+2026-09-02: it cost ~14 on-demand GPU-hours/day against an idle queue. With it off
+the worker sits at zero and the SQS queue-depth alarm
+(`offhours-queue-depth`) scales 0→1 when a job arrives, at any hour; the nightly
+01:00 UTC scale-to-zero still runs and is the only scale-in, so a cold-started box
+runs until then. In warm-window mode the same alarm covers overnight; expect a cold start of a
 few minutes for the instance plus vLLM model load from the cache volume. Spot
 interruptions are absorbed by the SQS visibility timeout: the job returns to
 the queue and the replacement instance reprocesses it. Terraform ignores
