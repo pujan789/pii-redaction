@@ -5,6 +5,7 @@ built from, so a matched value is pixel-accurate by construction. Failure
 direction is closed: a word that merely STARTS with the target is redacted
 whole, and every occurrence on the page is boxed.
 """
+
 from __future__ import annotations
 
 import re
@@ -44,9 +45,7 @@ def _exact(target: str, words: list[WordBox], norms: list[str]) -> list[Bounding
             if not next_norm:
                 break
             accumulated += next_norm
-            if accumulated == target or (
-                len(target) >= 8 and accumulated.startswith(target)
-            ):
+            if accumulated == target or (len(target) >= 8 and accumulated.startswith(target)):
                 found.extend(_boxes(words[start : end + 1]))
                 break
             if not target.startswith(accumulated):
@@ -129,9 +128,7 @@ def _overlaps(a: BoundingBox, b: BoundingBox) -> bool:
 
 def merge_page_detections(detections: list[Detection]) -> list[Detection]:
     merged: list[Detection] = []
-    ordered = sorted(
-        detections, key=lambda d: (d.page_index, d.category, d.box.y1, d.box.x1)
-    )
+    ordered = sorted(detections, key=lambda d: (d.page_index, d.category, d.box.y1, d.box.x1))
     for detection in ordered:
         target = next(
             (

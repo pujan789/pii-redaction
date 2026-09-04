@@ -4,6 +4,7 @@ The grid is what the LLM reads: whitespace mirrors the page, so a value sits
 under or beside its label exactly as printed. This is the defence against
 linear reading order scrambling label→value association on 2-D forms.
 """
+
 from __future__ import annotations
 
 from taxhance_pii.redaction.document import WordBox

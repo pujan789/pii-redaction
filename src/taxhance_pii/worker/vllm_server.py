@@ -1,4 +1,5 @@
 """Launch and supervise the localhost vLLM OpenAI server for the worker."""
+
 from __future__ import annotations
 
 import logging

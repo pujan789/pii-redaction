@@ -1,4 +1,5 @@
 """Text-anchored detection: grid → LLM names strings → geometry gives boxes."""
+
 from __future__ import annotations
 
 import json
@@ -102,8 +103,7 @@ class TextAnchoredDetector:
             if boxes:
                 anchored_count += 1
             result.detections.extend(
-                self._detection(result.page.page_index, category, box, 0.9)
-                for box in boxes
+                self._detection(result.page.page_index, category, box, 0.9) for box in boxes
             )
         return anchored_count
 

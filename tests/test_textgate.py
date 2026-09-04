@@ -4,33 +4,48 @@ from taxhance_pii.redaction.textgate import text_layer_is_garbage
 
 
 def words_from(texts: list[str]) -> list[WordBox]:
-    return [
-        WordBox(text=t, box=BoundingBox(x1=1, y1=1, x2=10, y2=10), source="pdf")
-        for t in texts
-    ]
+    return [WordBox(text=t, box=BoundingBox(x1=1, y1=1, x2=10, y2=10), source="pdf") for t in texts]
 
 
 def test_normal_english_form_text_passes() -> None:
-    sample = ["Employee's", "social", "security", "number", "Wages,", "tips,",
-              "other", "compensation", "123-45-6789", "48,563.35"]
+    sample = [
+        "Employee's",
+        "social",
+        "security",
+        "number",
+        "Wages,",
+        "tips,",
+        "other",
+        "compensation",
+        "123-45-6789",
+        "48,563.35",
+    ]
     assert text_layer_is_garbage(words_from(sample)) is False
 
 
 def test_degenerate_word_heights_fail() -> None:
     # Some PDF generators emit glyph boxes with near-zero heights; boxes built
     # from them paint unreadable slivers, so the page must route to OCR.
-    sample = ["Employee's", "social", "security", "number", "Wages,", "tips,",
-              "other", "compensation", "123-45-6789", "48,563.35"]
+    sample = [
+        "Employee's",
+        "social",
+        "security",
+        "number",
+        "Wages,",
+        "tips,",
+        "other",
+        "compensation",
+        "123-45-6789",
+        "48,563.35",
+    ]
     words = [
-        WordBox(text=t, box=BoundingBox(x1=1, y1=500, x2=10, y2=501), source="pdf")
-        for t in sample
+        WordBox(text=t, box=BoundingBox(x1=1, y1=500, x2=10, y2=501), source="pdf") for t in sample
     ]
     assert text_layer_is_garbage(words) is True
 
 
 def test_mojibake_text_fails() -> None:
-    sample = ["���", "Ã©ÂÂ",
-              "��", "è±¡å½¢"] * 5
+    sample = ["���", "Ã©ÂÂ", "��", "è±¡å½¢"] * 5
     assert text_layer_is_garbage(words_from(sample)) is True
 
 

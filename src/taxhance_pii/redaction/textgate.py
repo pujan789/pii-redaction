@@ -2,6 +2,7 @@
 mojibake (broken font encodings / missing ToUnicode maps) or carries broken
 glyph geometry (near-zero word heights). Detect both before the model ever
 sees the text; the caller then OCRs the rendered image instead."""
+
 from __future__ import annotations
 
 from statistics import median

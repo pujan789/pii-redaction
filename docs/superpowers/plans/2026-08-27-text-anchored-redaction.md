@@ -129,6 +129,7 @@ The grid is what the LLM reads: whitespace mirrors the page, so a value sits
 under or beside its label exactly as printed. This is the defence against
 linear reading order scrambling label→value association on 2-D forms.
 """
+
 from __future__ import annotations
 
 from taxhance_pii.redaction.document import WordBox
@@ -204,21 +205,32 @@ from taxhance_pii.redaction.textgate import text_layer_is_garbage
 
 
 def words_from(texts: list[str]) -> list[WordBox]:
-    return [
-        WordBox(text=t, box=BoundingBox(x1=1, y1=1, x2=10, y2=10), source="pdf")
-        for t in texts
-    ]
+    return [WordBox(text=t, box=BoundingBox(x1=1, y1=1, x2=10, y2=10), source="pdf") for t in texts]
 
 
 def test_normal_english_form_text_passes() -> None:
-    sample = ["Employee's", "social", "security", "number", "Wages,", "tips,",
-              "other", "compensation", "123-45-6789", "48,563.35"]
+    sample = [
+        "Employee's",
+        "social",
+        "security",
+        "number",
+        "Wages,",
+        "tips,",
+        "other",
+        "compensation",
+        "123-45-6789",
+        "48,563.35",
+    ]
     assert text_layer_is_garbage(words_from(sample)) is False
 
 
 def test_mojibake_text_fails() -> None:
-    sample = ["\ufffd\ufffd\ufffd", "\u00c3\u00a9\u00c2\u0081\u00c2\u009a",
-              "\ufffd\ufffd", "\u00e8\u00b1\u00a1\u00e5\u00bd\u00a2"] * 5
+    sample = [
+        "\ufffd\ufffd\ufffd",
+        "\u00c3\u00a9\u00c2\u0081\u00c2\u009a",
+        "\ufffd\ufffd",
+        "\u00e8\u00b1\u00a1\u00e5\u00bd\u00a2",
+    ] * 5
     assert text_layer_is_garbage(words_from(sample)) is True
 
 
@@ -242,6 +254,7 @@ Expected: FAIL with `ModuleNotFoundError`
 """Pre-model gate: a PDF can render perfectly while its embedded text layer is
 mojibake (broken font encodings / missing ToUnicode maps). Detect that before
 the model ever sees the text; the caller then OCRs the rendered image instead."""
+
 from __future__ import annotations
 
 from taxhance_pii.redaction.document import WordBox
@@ -399,9 +412,9 @@ def test_category_map_targets_domain_enum() -> None:
 
 
 def test_schema_enum_matches_map_keys() -> None:
-    enum = RESPONSE_JSON_SCHEMA["json_schema"]["schema"]["properties"]["items"][
-        "items"
-    ]["properties"]["category"]["enum"]
+    enum = RESPONSE_JSON_SCHEMA["json_schema"]["schema"]["properties"]["items"]["items"][
+        "properties"
+    ]["category"]["enum"]
     assert sorted(enum) == sorted(CATEGORY_MAP)
 
 
@@ -429,6 +442,7 @@ Expected: FAIL (old module contents)
 # src/taxhance_pii/redaction/prompt.py
 """The one universal detection prompt. Every page of every form type goes
 through this prompt — form-specific routing is deliberately gone."""
+
 from __future__ import annotations
 
 from taxhance_pii.domain import PiiCategory
@@ -585,10 +599,7 @@ def word(text: str, x1: int = 10, y1: int = 10, x2: int = 50, y2: int = 20) -> W
 
 
 def row(texts: list[str], y: int) -> list[WordBox]:
-    return [
-        word(t, x1=10 + i * 60, y1=y, x2=60 + i * 60, y2=y + 10)
-        for i, t in enumerate(texts)
-    ]
+    return [word(t, x1=10 + i * 60, y1=y, x2=60 + i * 60, y2=y + 10) for i, t in enumerate(texts)]
 
 
 def test_multiword_exact_match_returns_one_box_per_word() -> None:
@@ -635,10 +646,22 @@ def test_safety_net_joins_dash_split_pairs() -> None:
 
 
 def test_merge_unions_overlapping_same_category() -> None:
-    a = Detection(id="a", page_index=0, category=PiiCategory.SSN,
-                  box=BoundingBox(x1=10, y1=10, x2=50, y2=20), confidence=0.9, source="model")
-    b = Detection(id="b", page_index=0, category=PiiCategory.SSN,
-                  box=BoundingBox(x1=40, y1=10, x2=90, y2=20), confidence=0.95, source="regex")
+    a = Detection(
+        id="a",
+        page_index=0,
+        category=PiiCategory.SSN,
+        box=BoundingBox(x1=10, y1=10, x2=50, y2=20),
+        confidence=0.9,
+        source="model",
+    )
+    b = Detection(
+        id="b",
+        page_index=0,
+        category=PiiCategory.SSN,
+        box=BoundingBox(x1=40, y1=10, x2=90, y2=20),
+        confidence=0.95,
+        source="regex",
+    )
     merged = merge_page_detections([a, b])
     assert len(merged) == 1
     assert merged[0].box.x1 == 10 and merged[0].box.x2 == 90
@@ -660,6 +683,7 @@ built from, so a matched value is pixel-accurate by construction. Failure
 direction is closed: a word that merely STARTS with the target is redacted
 whole, and every occurrence on the page is boxed.
 """
+
 from __future__ import annotations
 
 import re
@@ -699,9 +723,7 @@ def _exact(target: str, words: list[WordBox], norms: list[str]) -> list[Bounding
             if not next_norm:
                 break
             accumulated += next_norm
-            if accumulated == target or (
-                len(target) >= 8 and accumulated.startswith(target)
-            ):
+            if accumulated == target or (len(target) >= 8 and accumulated.startswith(target)):
                 found.extend(_boxes(words[start : end + 1]))
                 break
             if not target.startswith(accumulated):
@@ -786,7 +808,9 @@ def _overlaps(a: BoundingBox, b: BoundingBox) -> bool:
 
 def merge_page_detections(detections: list[Detection]) -> list[Detection]:
     merged: list[Detection] = []
-    for detection in sorted(detections, key=lambda d: (d.page_index, d.category, d.box.y1, d.box.x1)):
+    for detection in sorted(
+        detections, key=lambda d: (d.page_index, d.category, d.box.y1, d.box.x1)
+    ):
         target = next(
             (
                 m
@@ -962,6 +986,7 @@ def test_wait_healthy_returns_when_health_endpoint_up(monkeypatch) -> None:
 ```python
 # src/taxhance_pii/worker/vllm_server.py
 """Launch and supervise the localhost vLLM OpenAI server for the worker."""
+
 from __future__ import annotations
 
 import logging
@@ -1076,9 +1101,7 @@ from taxhance_pii.worker.detector import NoopDetector, TextAnchoredDetector
 
 
 def word(text: str, x1: int, y1: int) -> WordBox:
-    return WordBox(
-        text=text, box=BoundingBox(x1=x1, y1=y1, x2=x1 + 40, y2=y1 + 10), source="pdf"
-    )
+    return WordBox(text=text, box=BoundingBox(x1=x1, y1=y1, x2=x1 + 40, y2=y1 + 10), source="pdf")
 
 
 def page(index: int, words: list[WordBox]) -> PageArtifact:
@@ -1122,7 +1145,9 @@ def vllm_stub():
 
 def make_detector(base_url: str) -> TextAnchoredDetector:
     settings = Settings(
-        token_pepper="x" * 40, vllm_base_url=base_url, vllm_launch=False,
+        token_pepper="x" * 40,
+        vllm_base_url=base_url,
+        vllm_launch=False,
         detector_concurrency=1,
     )
     return TextAnchoredDetector(settings)
@@ -1143,18 +1168,14 @@ def test_detects_anchors_and_propagates_across_pages(vllm_stub) -> None:
 
 def test_safety_net_applies_even_when_model_misses(vllm_stub) -> None:
     ScriptedVllm.responses = [{"items": []}]
-    detections = make_detector(vllm_stub).detect_document(
-        [page(0, [word("123-45-6789", 10, 10)])]
-    )
+    detections = make_detector(vllm_stub).detect_document([page(0, [word("123-45-6789", 10, 10)])])
     assert len(detections) == 1
     assert detections[0].source == "regex" and detections[0].category == PiiCategory.SSN
 
 
 def test_unparseable_content_yields_only_net(vllm_stub) -> None:
     ScriptedVllm.responses = [{"garbage": True}]
-    detections = make_detector(vllm_stub).detect_document(
-        [page(0, [word("hello", 10, 10)])]
-    )
+    detections = make_detector(vllm_stub).detect_document([page(0, [word("hello", 10, 10)])])
     assert detections == []
 
 
@@ -1171,6 +1192,7 @@ def test_noop_detector_contract() -> None:
 ```python
 # src/taxhance_pii/worker/detector.py
 """Text-anchored detection: grid → LLM names strings → geometry gives boxes."""
+
 from __future__ import annotations
 
 import json
@@ -1282,8 +1304,7 @@ class TextAnchoredDetector:
             if boxes:
                 anchored_count += 1
             result.detections.extend(
-                self._detection(result.page.page_index, category, box, 0.9)
-                for box in boxes
+                self._detection(result.page.page_index, category, box, 0.9) for box in boxes
             )
         return anchored_count
 
@@ -1417,18 +1438,16 @@ from taxhance_pii.redaction.prompt import PROMPT_VERSION
 - [ ] **Step 2: Rewrite the residual check in `_render_loaded`** (replaces `pipeline.py:183-207`): after rendering, re-load the output with OCR and require zero SSN-shaped residuals:
 
 ```python
-        if self.settings.ocr_enabled:
-            residual_pages = load_document(
-                output_path, ".pdf", self.settings.render_dpi, self.settings.max_pages, True
-            )
-            try:
-                if any(
-                    ssn_safety_net(page.page_index, page.words) for page in residual_pages
-                ):
-                    raise RedactionValidationError("residual_identifier_detected")
-            finally:
-                for page in residual_pages:
-                    page.image.close()
+if self.settings.ocr_enabled:
+    residual_pages = load_document(
+        output_path, ".pdf", self.settings.render_dpi, self.settings.max_pages, True
+    )
+    try:
+        if any(ssn_safety_net(page.page_index, page.words) for page in residual_pages):
+            raise RedactionValidationError("residual_identifier_detected")
+    finally:
+        for page in residual_pages:
+            page.image.close()
 ```
 
 - [ ] **Step 3: Rewire `worker/main.py`** — replace `build_vision_detector` (line 14 import, lines 105-117):

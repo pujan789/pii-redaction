@@ -110,9 +110,7 @@ def test_worker_runs_document_loops_concurrently(monkeypatch: MonkeyPatch) -> No
     monkeypatch.setattr(
         worker_main,
         "get_container",
-        lambda: SimpleNamespace(
-            settings=SimpleNamespace(runtime="aws", worker_poll_seconds=0.1)
-        ),
+        lambda: SimpleNamespace(settings=SimpleNamespace(runtime="aws", worker_poll_seconds=0.1)),
     )
     monkeypatch.setattr(worker_main, "stopping", False)
 

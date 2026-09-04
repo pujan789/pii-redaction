@@ -1,6 +1,9 @@
 """The one universal detection prompt. Every page of every form type goes
 through this prompt — form-specific routing is deliberately gone."""
+
 from __future__ import annotations
+
+from typing import Any
 
 from taxhance_pii.domain import PiiCategory
 
@@ -72,7 +75,7 @@ Return ONLY the JSON object. Example of the format (with made-up sample values):
 PAGE GRID:
 {page_grid}"""
 
-RESPONSE_JSON_SCHEMA: dict = {
+RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "type": "json_schema",
     "json_schema": {
         "name": "pii_items",

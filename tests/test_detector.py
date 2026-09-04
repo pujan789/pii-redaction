@@ -12,9 +12,7 @@ from taxhance_pii.worker.detector import NoopDetector, TextAnchoredDetector
 
 
 def word(text: str, x1: int, y1: int) -> WordBox:
-    return WordBox(
-        text=text, box=BoundingBox(x1=x1, y1=y1, x2=x1 + 40, y2=y1 + 10), source="pdf"
-    )
+    return WordBox(text=text, box=BoundingBox(x1=x1, y1=y1, x2=x1 + 40, y2=y1 + 10), source="pdf")
 
 
 def page(index: int, words: list[WordBox]) -> PageArtifact:
@@ -58,7 +56,9 @@ def vllm_stub():
 
 def make_detector(base_url: str) -> TextAnchoredDetector:
     settings = Settings(
-        token_pepper="x" * 40, vllm_base_url=base_url, vllm_launch=False,
+        token_pepper="x" * 40,
+        vllm_base_url=base_url,
+        vllm_launch=False,
         detector_concurrency=1,
     )
     return TextAnchoredDetector(settings)
@@ -83,18 +83,14 @@ def test_detects_anchors_and_propagates_across_pages(vllm_stub) -> None:
 
 def test_safety_net_applies_even_when_model_misses(vllm_stub) -> None:
     ScriptedVllm.responses = [{"items": []}]
-    detections = make_detector(vllm_stub).detect_document(
-        [page(0, [word("123-45-6789", 10, 10)])]
-    )
+    detections = make_detector(vllm_stub).detect_document([page(0, [word("123-45-6789", 10, 10)])])
     assert len(detections) == 1
     assert detections[0].source == "regex" and detections[0].category == PiiCategory.SSN
 
 
 def test_unparseable_content_yields_only_net(vllm_stub) -> None:
     ScriptedVllm.responses = [{"garbage": True}]
-    detections = make_detector(vllm_stub).detect_document(
-        [page(0, [word("hello", 10, 10)])]
-    )
+    detections = make_detector(vllm_stub).detect_document([page(0, [word("hello", 10, 10)])])
     assert detections == []
 
 

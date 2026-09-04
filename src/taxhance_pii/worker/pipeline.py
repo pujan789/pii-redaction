@@ -157,9 +157,7 @@ class WorkerPipeline:
                 True,
             )
             try:
-                if any(
-                    ssn_safety_net(page.page_index, page.words) for page in residual_pages
-                ):
+                if any(ssn_safety_net(page.page_index, page.words) for page in residual_pages):
                     raise RedactionValidationError("residual_identifier_detected")
             finally:
                 for page in residual_pages:

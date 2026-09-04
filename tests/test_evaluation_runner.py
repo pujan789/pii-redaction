@@ -69,9 +69,7 @@ def test_run_evaluation_processes_documents_concurrently(tmp_path: Path) -> None
     for index in range(2):
         pdf = tmp_path / f"doc-{index}.pdf"
         _make_pdf(pdf)
-        entries.append(
-            _entry(pdf).model_copy(update={"evaluation_id": f"eval-conc-{index:04d}"})
-        )
+        entries.append(_entry(pdf).model_copy(update={"evaluation_id": f"eval-conc-{index:04d}"}))
     manifest = SampleManifest(
         created_at=utc_now(),
         seed="test",
@@ -84,9 +82,7 @@ def test_run_evaluation_processes_documents_concurrently(tmp_path: Path) -> None
         ocr_enabled=False,
         document_concurrency=2,
     )
-    results = run_evaluation(
-        manifest, "tuning", settings, _BarrierDetector(), tmp_path / "out"
-    )
+    results = run_evaluation(manifest, "tuning", settings, _BarrierDetector(), tmp_path / "out")
     assert len(results) == 2
     assert all(result.passed_automatic_checks for result in results)
     summary = json.loads((tmp_path / "out" / "summary-tuning.json").read_text())

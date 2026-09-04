@@ -12,10 +12,7 @@ def word(text: str, x1: int = 10, y1: int = 10, x2: int = 50, y2: int = 20) -> W
 
 
 def row(texts: list[str], y: int) -> list[WordBox]:
-    return [
-        word(t, x1=10 + i * 60, y1=y, x2=60 + i * 60, y2=y + 10)
-        for i, t in enumerate(texts)
-    ]
+    return [word(t, x1=10 + i * 60, y1=y, x2=60 + i * 60, y2=y + 10) for i, t in enumerate(texts)]
 
 
 def test_multiword_exact_match_returns_one_box_per_word() -> None:
@@ -62,10 +59,22 @@ def test_safety_net_joins_dash_split_pairs() -> None:
 
 
 def test_merge_unions_overlapping_same_category() -> None:
-    a = Detection(id="a", page_index=0, category=PiiCategory.SSN,
-                  box=BoundingBox(x1=10, y1=10, x2=50, y2=20), confidence=0.9, source="model")
-    b = Detection(id="b", page_index=0, category=PiiCategory.SSN,
-                  box=BoundingBox(x1=40, y1=10, x2=90, y2=20), confidence=0.95, source="regex")
+    a = Detection(
+        id="a",
+        page_index=0,
+        category=PiiCategory.SSN,
+        box=BoundingBox(x1=10, y1=10, x2=50, y2=20),
+        confidence=0.9,
+        source="model",
+    )
+    b = Detection(
+        id="b",
+        page_index=0,
+        category=PiiCategory.SSN,
+        box=BoundingBox(x1=40, y1=10, x2=90, y2=20),
+        confidence=0.95,
+        source="regex",
+    )
     merged = merge_page_detections([a, b])
     assert len(merged) == 1
     assert merged[0].box.x1 == 10 and merged[0].box.x2 == 90

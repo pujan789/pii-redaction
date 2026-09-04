@@ -20,9 +20,9 @@ def test_category_map_targets_domain_enum() -> None:
 
 
 def test_schema_enum_matches_map_keys() -> None:
-    enum = RESPONSE_JSON_SCHEMA["json_schema"]["schema"]["properties"]["items"][
-        "items"
-    ]["properties"]["category"]["enum"]
+    enum = RESPONSE_JSON_SCHEMA["json_schema"]["schema"]["properties"]["items"]["items"][
+        "properties"
+    ]["category"]["enum"]
     assert sorted(enum) == sorted(CATEGORY_MAP)
 
 
