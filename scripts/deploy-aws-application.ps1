@@ -120,9 +120,16 @@ $applyArguments = @("apply", "-input=false", "-lock-timeout=30s", "-auto-approve
 & $tofuCommand $chdirArgument @applyArguments
 if ($LASTEXITCODE -ne 0) { throw "Application apply failed." }
 
+$url = & $tofuCommand $chdirArgument output -raw application_url
+if ($url -notmatch "^https://[A-Za-z0-9.-]+$") {
+    throw "Application URL output is invalid."
+}
+
 if (-not $SkipFrontend) {
+    $previousApiBaseUrl = [Environment]::GetEnvironmentVariable("VITE_API_BASE_URL", "Process")
     Push-Location $frontendRoot
     try {
+        $env:VITE_API_BASE_URL = $url
         npm ci
         if ($LASTEXITCODE -ne 0) { throw "Frontend dependency install failed." }
         npm run lint
@@ -132,6 +139,11 @@ if (-not $SkipFrontend) {
         npm run build
         if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
     } finally {
+        [Environment]::SetEnvironmentVariable(
+            "VITE_API_BASE_URL",
+            $previousApiBaseUrl,
+            "Process"
+        )
         Pop-Location
     }
 
@@ -146,7 +158,6 @@ if (-not $SkipFrontend) {
     aws cloudfront create-invalidation --distribution-id $distribution --paths "/*" --query "Invalidation.Id" --output text
     if ($LASTEXITCODE -ne 0) { throw "CloudFront invalidation failed." }
 }
-$url = & $tofuCommand $chdirArgument output -raw application_url
 [pscustomobject]@{
     ApplicationUrl = $url
     LambdaDigest = $lambdaDigest
