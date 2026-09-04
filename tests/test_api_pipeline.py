@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from taxhance_pii.api import main as api_main
 from taxhance_pii.config import Settings
 from taxhance_pii.container import build_container
 from taxhance_pii.domain import BoundingBox, Detection, JobStatus, PiiCategory, TaskType
+from taxhance_pii.service import JobService
 from taxhance_pii.worker.pipeline import WorkerPipeline
 
 
@@ -114,5 +116,63 @@ def test_access_token_is_required(tmp_path: Path, sample_jpeg: bytes) -> None:
             ).status_code
             == 404
         )
+    finally:
+        api_main.container = previous
+
+
+def test_failed_blob_deletion_can_be_retried_and_cleaned_up(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    container = build_container(_settings(tmp_path))
+    previous = api_main.container
+    api_main.container = container
+    try:
+        client = TestClient(api_main.app)
+        created = client.post(
+            "/v1/jobs",
+            json={
+                "filename": "synthetic.pdf",
+                "size_bytes": 10,
+                "content_type": "application/pdf",
+            },
+        ).json()
+        headers = {"X-Job-Token": created["access_token"]}
+        original_delete = container.blobs.delete_prefix
+        attempts = 0
+
+        def delete_prefix(prefix: str) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts in {1, 3}:
+                raise RuntimeError("temporary storage failure")
+            original_delete(prefix)
+
+        monkeypatch.setattr(container.blobs, "delete_prefix", delete_prefix)
+
+        first = client.delete(f"/v1/jobs/{created['job_id']}", headers=headers)
+        assert first.status_code == 503
+        assert first.json() == {"error": "delete_failed"}
+        tombstone = container.repository.get(created["job_id"])
+        assert tombstone is not None
+        assert tombstone.status == JobStatus.DELETED
+
+        repeated = client.delete(f"/v1/jobs/{created['job_id']}", headers=headers)
+        assert repeated.status_code == 204
+
+        service = JobService(
+            container.settings,
+            container.repository,
+            container.blobs,
+            container.queue,
+        )
+        assert service.cleanup_expired() == 0
+        tombstone = container.repository.get(created["job_id"])
+        assert tombstone is not None
+        assert tombstone.status == JobStatus.DELETED
+
+        assert service.cleanup_expired() == 1
+        expired = container.repository.get(created["job_id"])
+        assert expired is not None
+        assert expired.status == JobStatus.EXPIRED
     finally:
         api_main.container = previous

@@ -35,4 +35,27 @@ describe("download and delete", () => {
     vi.runAllTimers();
     expect(revoke).toHaveBeenCalledWith("blob:private-result");
   });
+
+  it("uses a custom download filename", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:custom-result"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadName = this.download;
+    });
+
+    await saveBlobAndDelete(new Blob(["pdf"]), async () => undefined, "client-redacted.pdf");
+
+    expect(downloadName).toBe("client-redacted.pdf");
+    vi.runAllTimers();
+  });
 });

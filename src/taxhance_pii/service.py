@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import timedelta
 
@@ -27,6 +28,8 @@ from taxhance_pii.security import (
 )
 from taxhance_pii.storage import BlobStore
 from taxhance_pii.task_queue import TaskQueue
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceError(RuntimeError):
@@ -117,11 +120,15 @@ class JobService:
             upload=upload,
         )
 
-    def require_job(self, job_id: str, token: str) -> JobRecord:
+    def _authenticated_job(self, job_id: str, token: str) -> JobRecord:
         job = self.repository.get(job_id)
         if job is None or not token_matches(token, job.token_hash, self.settings.pepper_bytes):
             # Deliberately do not reveal whether a job ID exists.
             raise ServiceError("job_not_found", 404)
+        return job
+
+    def require_job(self, job_id: str, token: str) -> JobRecord:
+        job = self._authenticated_job(job_id, token)
         if job.status in {JobStatus.DELETED, JobStatus.EXPIRED}:
             raise ServiceError("job_not_found", 404)
         if job.expires_at <= utc_now():
@@ -253,31 +260,61 @@ class JobService:
         return self.to_response(queued)
 
     def delete(self, job_id: str, token: str) -> None:
-        job = self.require_job(job_id, token)
+        job = self._authenticated_job(job_id, token)
+        if job.status == JobStatus.EXPIRED:
+            raise ServiceError("job_not_found", 404)
+        if job.status != JobStatus.DELETED:
+            try:
+                job = self.repository.update(
+                    job.job_id,
+                    None,
+                    status=JobStatus.DELETED,
+                    error_code=None,
+                    expires_at=utc_now(),
+                )
+            except (JobNotFound, StateConflict) as exc:
+                raise ServiceError("job_not_found", 404) from exc
         try:
-            self.repository.update(
-                job.job_id,
-                None,
-                status=JobStatus.DELETED,
-                error_code=None,
-                expires_at=utc_now(),
-            )
-        except (JobNotFound, StateConflict) as exc:
-            raise ServiceError("job_not_found", 404) from exc
-        self.blobs.delete_prefix(f"jobs/{job.job_id}")
+            self.blobs.delete_prefix(f"jobs/{job.job_id}")
+        except Exception as exc:
+            logger.warning("job_blob_delete_failed", extra={"job_id": job.job_id}, exc_info=True)
+            raise ServiceError("delete_failed", 503) from exc
 
     def cleanup_expired(self, limit: int = 100) -> int:
         expired = self.repository.list_expired(utc_now(), limit)
-        for job in expired:
-            self._expire(job)
-        return len(expired)
+        return sum(self._expire(job) for job in expired)
 
-    def _expire(self, job: JobRecord) -> None:
+    def _expire(self, job: JobRecord) -> bool:
+        if job.status != JobStatus.DELETED:
+            try:
+                job = self.repository.update(
+                    job.job_id,
+                    None,
+                    status=JobStatus.DELETED,
+                    error_code=None,
+                    expires_at=utc_now(),
+                )
+            except (JobNotFound, StateConflict):
+                return False
         try:
-            self.repository.update(job.job_id, None, status=JobStatus.EXPIRED, error_code=None)
+            self.blobs.delete_prefix(f"jobs/{job.job_id}")
+        except Exception:
+            logger.warning(
+                "expired_blob_delete_failed",
+                extra={"job_id": job.job_id},
+                exc_info=True,
+            )
+            return False
+        try:
+            self.repository.update(
+                job.job_id,
+                {JobStatus.DELETED},
+                status=JobStatus.EXPIRED,
+                error_code=None,
+            )
         except (JobNotFound, StateConflict):
-            return
-        self.blobs.delete_prefix(f"jobs/{job.job_id}")
+            return False
+        return True
 
     def _hash_token(self, token: str) -> str:
         from taxhance_pii.security import keyed_hash

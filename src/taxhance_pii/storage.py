@@ -215,10 +215,12 @@ class S3BlobStore:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix.rstrip("/") + "/"):
             objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
             if objects:
-                self.client.delete_objects(
+                response = self.client.delete_objects(
                     Bucket=self.bucket,
                     Delete={"Objects": objects, "Quiet": True},
                 )
+                if response.get("Errors"):
+                    raise RuntimeError("s3_delete_failed")
 
     def download_url(self, key: str, expires_in: int) -> str:
         return str(

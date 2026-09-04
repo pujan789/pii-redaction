@@ -59,6 +59,19 @@ def test_sqlite_abuse_counts(tmp_path: Path) -> None:
     assert repository.count_recent("b" * 32, utc_now() - timedelta(minutes=1)) == 2
 
 
+def test_sqlite_deleted_jobs_remain_expiry_cleanup_candidates(tmp_path: Path) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    deleted = _job("deleted").model_copy(
+        update={
+            "status": JobStatus.DELETED,
+            "expires_at": utc_now() - timedelta(minutes=1),
+        }
+    )
+    repository.create(deleted)
+
+    assert [job.job_id for job in repository.list_expired(utc_now())] == ["deleted"]
+
+
 class _PagedTable:
     def __init__(self, pages: list[dict[str, object]]) -> None:
         self.pages = iter(pages)

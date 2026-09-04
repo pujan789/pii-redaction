@@ -208,10 +208,10 @@ class SQLiteJobRepository:
             rows = connection.execute(
                 """
                 SELECT payload FROM jobs
-                WHERE expires_at_epoch <= ? AND status NOT IN (?, ?)
+                WHERE expires_at_epoch <= ? AND status != ?
                 ORDER BY expires_at_epoch LIMIT ?
                 """,
-                (_epoch(before), JobStatus.DELETED.value, JobStatus.EXPIRED.value, limit),
+                (_epoch(before), JobStatus.EXPIRED.value, limit),
             ).fetchall()
         return [_deserialize(row["payload"]) for row in rows]
 
@@ -356,7 +356,7 @@ class DynamoJobRepository:
         request: dict[str, object] = {
             "Limit": limit,
             "FilterExpression": Attr("expires_at_epoch").lte(_epoch(before))
-            & ~Attr("status").is_in([JobStatus.DELETED.value, JobStatus.EXPIRED.value]),
+            & Attr("status").ne(JobStatus.EXPIRED.value),
             "ProjectionExpression": "payload",
         }
         items: list[dict[str, object]] = []
