@@ -8,6 +8,7 @@ export default defineConfig({
   appType: "mpa",
   plugins: [react()],
   build: {
+    assetsInlineLimit: 0,
     rollupOptions: {
       input: {
         landing: "index.html",
