@@ -83,8 +83,11 @@ resource "aws_wafv2_web_acl" "public" {
     }
     statement {
       rate_based_statement {
-        aggregate_key_type    = "IP"
-        limit                 = 300
+        aggregate_key_type = "IP"
+        // A 50-document batch makes several API requests per file, while two
+        // active jobs poll during GPU startup. Job/hour and active-job limits
+        // in the API separately bound processing costs.
+        limit                 = 2000
         evaluation_window_sec = 300
       }
     }

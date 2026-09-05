@@ -43,6 +43,13 @@ interruptions are absorbed by the SQS visibility timeout: the job returns to
 the queue and the replacement instance reprocesses it. Terraform ignores
 `desired_capacity` drift so applies never fight the schedule.
 
+Before checking a cold worker, account for two separate startup delays. After a queue
+has been inactive for more than six hours, [SQS metric publication can resume up to
+15 minutes later](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/monitoring-using-cloudwatch.html),
+delaying the queue-depth alarm. A fresh instance also downloads its container and model
+and compiles GPU kernels; this took about 14 minutes in the September 5, 2026 release
+check after launching the instance. These delays are outside warm processing benchmarks.
+
 Regional GPU spot capacity can dry up entirely (observed 2026-08-29:
 g6/g5.xlarge spot unfulfillable in us-east-1 for hours; jobs then wait in the
 queue until they expire). When that happens, deploy with
