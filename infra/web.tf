@@ -38,7 +38,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   name = "${local.prefix}-security"
   security_headers_config {
     content_security_policy {
-      content_security_policy = "default-src 'self'; connect-src 'self' https:; img-src 'self' blob: data: https:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
+      content_security_policy = "default-src 'self'; connect-src 'self' https:; img-src 'self' blob: data: https:; frame-src blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https:"
       override                = true
     }
     content_type_options { override = true }
@@ -128,7 +128,7 @@ resource "aws_cloudfront_function" "directory_index" {
 
   name    = "${local.prefix}-directory-index"
   runtime = "cloudfront-js-2.0"
-  comment = "Rewrite directory URLs to their index.html"
+  comment = "Canonicalize directory URLs and serve their index.html"
   publish = true
   code    = <<-EOT
     function handler(event) {
@@ -137,7 +137,22 @@ resource "aws_cloudfront_function" "directory_index" {
       if (uri.endsWith("/")) {
         request.uri = uri + "index.html";
       } else if (!uri.split("/").pop().includes(".")) {
-        request.uri = uri + "/index.html";
+        // A relative redirect preserves an outer proxy's path prefix. The slash
+        // is necessary for relative script, stylesheet, and navigation URLs.
+        var location = "./" + uri.split("/").pop() + "/";
+        var query = [];
+        Object.keys(request.querystring || {}).forEach(function (key) {
+          var entry = request.querystring[key];
+          (entry.multiValue || [entry]).forEach(function (item) {
+            query.push(key + "=" + item.value);
+          });
+        });
+        if (query.length) location += "?" + query.join("&");
+        return {
+          statusCode: 301,
+          statusDescription: "Moved Permanently",
+          headers: { location: { value: location } }
+        };
       }
       return request;
     }

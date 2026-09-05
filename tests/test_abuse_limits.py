@@ -47,6 +47,15 @@ def test_active_job_limit_is_per_client(tmp_path: Path) -> None:
     service.create_job(_request(), "192.0.2.2")
 
 
+def test_default_allowance_supports_fifty_document_batches(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    for _ in range(50):
+        created = service.create_job(_request(), "192.0.2.50")
+        service.delete(created.job_id, created.access_token)
+    assert service.settings.max_jobs_per_ip_per_hour >= 50
+    assert service.settings.max_active_jobs_per_ip == 5
+
+
 def test_hourly_and_queue_limits_fail_closed(tmp_path: Path) -> None:
     hourly = _service(
         tmp_path / "hourly",

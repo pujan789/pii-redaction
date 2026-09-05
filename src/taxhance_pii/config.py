@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     retention_cleanup_margin_minutes: int = Field(default=5, ge=5, le=60)
     max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1024, le=500 * 1024 * 1024)
     max_pages: int = Field(default=300, ge=1, le=2_000)
-    max_jobs_per_ip_per_hour: int = Field(default=30, ge=1, le=10_000)
+    max_jobs_per_ip_per_hour: int = Field(default=100, ge=1, le=10_000)
     max_active_jobs_per_ip: int = Field(default=5, ge=1, le=1_000)
     max_queue_depth: int = Field(default=500, ge=1, le=1_000_000)
     upload_url_ttl_seconds: int = Field(default=900, ge=60, le=3_600)

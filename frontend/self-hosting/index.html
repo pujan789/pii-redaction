@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Self-hosting, Costs &amp; Installation | Taxhance PII Redaction</title>
+    <meta name="description" content="Run Taxhance PII Redaction on your firm's servers. See our AWS GPU costs, measured page throughput, and installation help from Pujan at $100/hour." />
+    <link rel="canonical" href="https://taxhance.com/pii-redaction/self-hosting/" />
+    <meta name="theme-color" content="#4f46e5" />
+    <link rel="icon" type="image/png" href="../favicon.png" />
+    <link rel="stylesheet" href="../landing.css" />
+  </head>
+  <body class="hosting-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap nav">
+        <a class="wordmark" href="../" aria-label="Taxhance PII Redaction home">
+          <img class="wordmark-logo" src="../taxhance-logo.png" alt="Taxhance" />
+          <span class="wordmark-tag">PII Redaction</span>
+        </a>
+        <nav class="nav-links" aria-label="Self-hosting sections">
+          <a href="#costs">Running costs</a>
+          <a href="#performance">Performance</a>
+          <a href="#installation">Installation</a>
+        </nav>
+        <div class="nav-actions"><a class="btn btn-primary" href="../app/">Try redaction</a></div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hosting-hero">
+        <div class="wrap">
+          <a class="hosting-back text-link" href="../">&larr; Back to PII Redaction</a>
+          <p class="eyebrow">Self-hosting for firms</p>
+          <h1>Your documents.<br />Your infrastructure.</h1>
+          <p class="hosting-intro">Run the open-source redaction pipeline on your firm's servers or in
+            your own cloud account. Built for firms that want to process document batches while
+            keeping client files inside infrastructure they control.</p>
+          <div class="hosting-actions">
+            <a class="btn btn-primary btn-lg" href="#installation">Get installation help <span aria-hidden="true">&rarr;</span></a>
+            <a class="btn btn-outline btn-lg" href="https://github.com/pujan789/pii-redaction#local-self-hosting">Install it yourself</a>
+          </div>
+          <div class="hosting-metrics" aria-label="Self-hosting at a glance">
+            <div class="hosting-metric"><span>Open-source software</span><strong>$0</strong><p>Run and modify under the project's AGPL-3.0 license.</p></div>
+            <div class="hosting-metric"><span>Our primary AWS GPU</span><strong>~$0.80<span>/hour</span></strong><p>Compute only, while a g6.xlarge instance is running.</p></div>
+            <div class="hosting-metric"><span>Measured pipeline throughput</span><strong>~2,700<span> pages/hour</span></strong><p>A recorded benchmark; your workload and hardware affect speed.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section hosting-costs" id="costs">
+        <div class="wrap hosting-columns">
+          <div>
+            <span class="eyebrow">Plan your running costs</span>
+            <h2>A reference from our AWS setup.</h2>
+            <p>Our primary worker is an AWS EC2 <strong>g6.xlarge</strong> in US East (N. Virginia).
+              Its Linux On-Demand rate is <strong>$0.8048 per running hour</strong>.
+              That gives these compute-only examples:</p>
+            <div class="hosting-cost-table">
+              <table>
+                <caption>One g6.xlarge worker, USD</caption>
+                <thead><tr><th scope="col">Usage</th><th scope="col">Hours/month</th><th scope="col">GPU compute</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">8 hours &times; 22 workdays</th><td>176</td><td>~$142/month</td></tr>
+                  <tr><th scope="row">Running continuously</th><td>730</td><td>~$588/month</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hosting-note">These are estimates from our worker's unit rate, not a full monthly bill.
+              Storage, API services, networking, taxes, and administration are extra. A stopped GPU
+              avoids running compute charges, but other resources can still incur costs.</p>
+            <a class="text-link" href="#reference-notes">Pricing assumptions &amp; sources &darr;</a>
+          </div>
+          <aside class="hosting-specs" aria-label="Reference configuration">
+            <span class="eyebrow">What we actually run</span>
+            <h3>Gemma 4 E2B on AWS EC2</h3>
+            <dl>
+              <div><dt>Model</dt><dd><code>google/gemma-4-E2B-it</code></dd></div>
+              <div><dt>Primary worker</dt><dd>g6.xlarge &middot; NVIDIA L4, 24 GB GPU memory</dd></div>
+              <div><dt>CPU &amp; RAM</dt><dd>4 vCPUs &middot; 16 GiB system memory</dd></div>
+              <div><dt>Capacity fallback</dt><dd>g5.xlarge &middot; NVIDIA A10G, 24 GB<br /><span>Priced separately by AWS.</span></dd></div>
+              <div><dt>Self-hosting requirements</dt><dd>Linux, Docker Compose, an NVIDIA GPU, and NVIDIA Container Toolkit</dd></div>
+            </dl>
+            <p>Already have a suitable GPU server? Use it. You cover your own hardware, electricity,
+              storage, and maintenance; there is no Taxhance software subscription.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section hosting-performance" id="performance">
+        <div class="wrap hosting-columns">
+          <div>
+            <span class="eyebrow">Measured performance</span>
+            <h2>180 pages.<br />About four minutes.</h2>
+            <p>Our recorded Gemma pipeline benchmark processed <strong>30 documents containing
+              180 pages in 239.6 seconds</strong>. That is roughly <strong>2,700 pages per hour</strong>
+              across the run.</p>
+            <p>A separate run processed 63 pages in 80.2 seconds, or about 2,800 pages per hour.
+              These are processing measurements, not a guaranteed rate for every deployment.</p>
+          </div>
+          <div class="hosting-performance-notes">
+            <h3>What that means for your firm</h3>
+            <p>Use page count to size capacity: 50 short documents and 50 large scanned returns
+              are very different workloads.</p>
+            <p>The measured pipeline includes document rendering, detection, redacted PDF output,
+              and automated evaluation checks. Initial uploads, model startup, downloads, and
+              human review are outside the timer.</p>
+            <p>Scan quality, page complexity, concurrent work, and your GPU change throughput.
+              A sample batch on your server is the best way to establish your firm's expected speed.</p>
+            <a class="text-link" href="#reference-notes">Read the benchmark notes &darr;</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="installation">
+        <div class="wrap hosting-install">
+          <div>
+            <span class="eyebrow">Work directly with Pujan</span>
+            <h2>Want it installed for your firm?</h2>
+            <p>For larger firms looking to host this themselves, I can install Taxhance PII Redaction
+              on your own servers. Email me with your server or cloud setup and expected document volume
+              to discuss the installation.</p>
+            <a class="btn btn-primary btn-lg" href="mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation">Email Pujan <span aria-hidden="true">&rarr;</span></a>
+            <a class="hosting-email" href="mailto:pujan@taxhance.com">pujan@taxhance.com</a>
+          </div>
+          <div class="hosting-rate">
+            <span>Installation assistance</span>
+            <p>$100<span>/hour</span></p>
+            <span>USD, billed for installation time.<br />Infrastructure costs are separate.</span>
+          </div>
+        </div>
+        <div class="wrap hosting-diy">
+          <div><h3>Prefer to set it up yourself?</h3><p>The code and Docker Compose instructions are public.</p></div>
+          <a class="text-link" href="https://github.com/pujan789/pii-redaction#local-self-hosting">Read the setup instructions &rarr;</a>
+        </div>
+      </section>
+
+      <section class="section hosting-references" id="reference-notes">
+        <div class="wrap wrap-narrow">
+          <h2>Reference notes</h2>
+          <p><strong>Configuration and pricing checked September 5, 2026.</strong> The live worker configuration
+            uses Gemma 4 E2B, with g6.xlarge preferred and g5.xlarge as a capacity fallback. AWS Price List API
+            returned $0.8048/hour for shared-tenancy Linux g6.xlarge On-Demand in US East (N. Virginia).
+            Monthly examples multiply that rate by 176 and 730 hours; they do not include discounts or other services.</p>
+          <p>See <a class="text-link" href="https://aws.amazon.com/ec2/pricing/on-demand/">AWS On-Demand pricing</a>,
+            <a class="text-link" href="https://aws.amazon.com/ec2/instance-types/g6/">G6 specifications</a>, and
+            <a class="text-link" href="https://aws.amazon.com/ec2/instance-types/g5/">G5 specifications</a> for current details.</p>
+          <p><strong>Benchmark basis:</strong> saved Gemma evaluation summaries from August 29, 2026:
+            180 pages / 239.613 seconds and 63 pages / 80.201 seconds of elapsed wall time.
+            Hourly rates are calculated as pages &times; 3,600 / elapsed seconds. The summaries do not record
+            the exact GPU, so these measurements are a pipeline reference, not a certified g6.xlarge benchmark.
+            Only aggregate statistics are published; client documents and individual results remain private.</p>
+          <p><strong>License:</strong> the software is
+            <a class="text-link" href="https://github.com/pujan789/pii-redaction/blob/main/LICENSE">AGPL-3.0</a> with a
+            <a class="text-link" href="https://github.com/pujan789/pii-redaction/blob/main/LICENSE-EXCEPTION.md">noncommercial private-use exception</a>.
+            Model weights have their own terms. Installation assistance is optional and separate from software licensing.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap footer-grid">
+        <div><a class="wordmark" href="../" aria-label="Taxhance PII Redaction home"><img class="wordmark-logo" src="../taxhance-logo.png" alt="Taxhance" /><span class="wordmark-tag">PII Redaction</span></a><p class="footer-note">Gemma 4 E2B &middot; hosted on AWS EC2</p></div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="../#privacy">Privacy</a>
+          <a href="https://github.com/pujan789/pii-redaction">GitHub</a>
+          <a href="https://github.com/pujan789/pii-redaction/blob/main/SECURITY.md">Security</a>
+          <a href="mailto:pujan@taxhance.com">Contact Pujan</a>
+        </nav>
+      </div>
+      <div class="wrap footer-legal"><span>&copy; 2026 Taxhance</span><span>Open source. Self-hostable.</span></div>
+    </footer>
+  </body>
+</html>

@@ -27,7 +27,7 @@ function headers(credentials: JobCredentials): HeadersInit {
   return { "X-Job-Token": credentials.token };
 }
 
-export async function createJob(file: File): Promise<CreatedJob> {
+export async function createJob(file: File, autoFinalize = false): Promise<CreatedJob> {
   const response = await checked(
     await fetch(`${API_BASE}/v1/jobs`, {
       method: "POST",
@@ -36,7 +36,7 @@ export async function createJob(file: File): Promise<CreatedJob> {
         filename: file.name,
         size_bytes: file.size,
         content_type: file.type || "application/octet-stream",
-        auto_finalize: false,
+        auto_finalize: autoFinalize,
       }),
     }),
   );

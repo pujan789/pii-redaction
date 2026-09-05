@@ -40,7 +40,8 @@ grant either application access to the other.
    across all of its pages; add the deterministic SSN-shape safety net; merge
    overlapping boxes.
 7. Store raster previews and a text-free box manifest for human review.
-8. After approval, paint opaque black rectangles and encode a new image-only PDF.
+8. After manual approval, or automatic finalization selected for a batch, paint opaque
+   black rectangles and encode a new image-only PDF.
 9. Reopen the output and fail unless page count, absent text layer/active content, and
    opaque redaction pixels all verify.
 10. OCR the flattened output and fail closed if an SSN-shaped identifier

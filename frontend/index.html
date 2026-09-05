@@ -16,7 +16,7 @@
     <meta property="og:title" content="Making tax documents safe for AI" />
     <meta
       property="og:description"
-      content="PII redaction for CPA firms. Free, no signup, and deleted after download or within one hour. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in the USA, never through a third-party AI API."
+      content="PII redaction for CPA firms. Redact a batch automatically or review each document. Free, no signup, and deleted after download or within one hour. Gemma 4 E2B runs in our AWS account in the USA."
     />
     <meta property="og:url" content="https://taxhance.com/pii-redaction/" />
     <meta name="twitter:card" content="summary" />
@@ -29,7 +29,7 @@
         "applicationCategory": "BusinessApplication",
         "operatingSystem": "Web",
         "url": "https://taxhance.com/pii-redaction/",
-        "description": "PII redaction for CPA and tax firms. Removes client identifiers from tax documents before they are shared with AI tools. Every redaction is human-reviewed.",
+        "description": "PII redaction for CPA and tax firms. Remove client identifiers from a batch of tax documents automatically, or review each document before exporting.",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "license": "https://www.gnu.org/licenses/agpl-3.0.html"
       }
@@ -44,7 +44,7 @@
             "name": "Is my data used to train AI models?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "No. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in the USA, your documents never reach OpenAI, Google, or another AI vendor, and every file is deleted after download or within one hour."
+              "text": "No. Gemma 4 E2B runs on an AWS EC2 GPU worker in our AWS account in the USA. Document inference does not use a third-party AI API, and every file is deleted after download or within one hour."
             }
           },
           {
@@ -68,7 +68,7 @@
             "name": "Can my firm self-host it?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. The pipeline is licensed under AGPL-3.0 with a noncommercial private-use exception and runs with Docker Compose on your own GPU, so client documents never leave your network."
+              "text": "Yes. Run the open-source pipeline on your firm's GPU servers with Docker Compose. Our reference AWS GPU costs $0.8048 per running hour, excluding other infrastructure. Our recorded benchmark processed about 2,700 pages per hour; actual speed varies. For installation on your own servers at $100 per hour, contact pujan@taxhance.com."
             }
           },
           {
@@ -88,7 +88,7 @@
 
     <header class="site-header">
       <div class="wrap nav">
-        <a class="wordmark" href="https://taxhance.com/">
+        <a class="wordmark" href="./" aria-label="Taxhance PII Redaction home">
           <img class="wordmark-logo" src="/taxhance-logo.png" alt="Taxhance" />
           <span class="wordmark-tag">PII Redaction</span>
         </a>
@@ -119,13 +119,13 @@
           </a>
           <h1>Making tax documents<br /><span class="grad">safe for AI</span></h1>
           <p class="sub">
-            Taxhance covers the client's personal details on a tax document, shows you every box
-            for review, and gives you a clean PDF you can paste into ChatGPT, Claude, or any
-            other AI tool.
+            Upload a document or an entire folder. Automatically redact client details and
+            download every PDF together, or review each document before exporting.
+            Keep the tax figures you need for your work.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary btn-lg" href="./app/">Redact a document <span class="arrow" aria-hidden="true">&rarr;</span></a>
-            <a class="btn btn-outline btn-lg" href="#open-source">View the source</a>
+            <a class="btn btn-outline btn-lg" href="https://github.com/pujan789/pii-redaction">View the source</a>
           </div>
           <ul class="trust-strip">
             <li>No signup</li>
@@ -178,7 +178,7 @@
                 </div>
               </div>
               <div class="doc-foot">
-                <span class="gpu-label">Qwen3-VL-8B-Instruct &middot; SOC 2 infrastructure</span>
+                <span class="gpu-label">Gemma 4 E2B &middot; AWS EC2 GPU</span>
                 <span class="ready-label" role="status"><span class="tick" aria-hidden="true">&#10003;</span> AI-ready &middot; 3 redactions reviewed</span>
               </div>
               <div class="scanline" aria-hidden="true"></div>
@@ -216,24 +216,24 @@
               <span class="step-num">01</span>
               <h3>Upload</h3>
               <p>
-                Drop in a PDF or a scan. It's processed once, for this job only, and it never
-                joins a training set.
+                Drop in PDFs, scans, or an entire folder. Every file is processed for your
+                job only and never joins a training set.
               </p>
             </li>
             <li class="step">
               <span class="step-num">02</span>
-              <h3>Review</h3>
+              <h3>Redact</h3>
               <p>
-                Qwen3-VL-8B-Instruct and deterministic detectors propose every redaction box.
-                You approve, adjust, or add boxes before anything is final.
+                Gemma 4 E2B and deterministic detectors find client identifiers. Redact the
+                batch automatically, or choose manual review to adjust individual boxes.
               </p>
             </li>
             <li class="step">
               <span class="step-num">03</span>
               <h3>Download</h3>
               <p>
-                You get a flattened, raster-only PDF. Covered text, hidden layers, and metadata
-                are unrecoverable, and your original is deleted.
+                Download one flattened PDF or all completed PDFs in a ZIP. Covered pixels,
+                hidden text layers, and source metadata are removed from the exported PDFs.
               </p>
             </li>
           </ol>
@@ -249,10 +249,10 @@
           </div>
           <div class="privacy-grid">
             <article class="pledge">
-              <h3>Our bare metal, not their API</h3>
+              <h3>Hosted in our AWS account</h3>
               <p>
-                The model runs on a dedicated GPU worker in the USA. Your documents never
-                reach OpenAI, Google, or another AI vendor.
+                Gemma 4 E2B runs on AWS EC2 GPU instances in US East (N. Virginia).
+                Document inference stays in our AWS account and uses no third-party AI API.
               </p>
             </article>
             <article class="pledge">
@@ -277,18 +277,17 @@
               </p>
             </article>
             <article class="pledge">
-              <h3>SOC 2 compliant infrastructure</h3>
+              <h3>Encrypted in transit and at rest</h3>
               <p>
-                Your documents are processed and stored on SOC 2 compliant infrastructure in
-                the USA. Encrypted from upload to deletion: TLS 1.2+ in transit, AES-256 at
-                rest.
+                Your documents are processed and stored in the USA. Connections use TLS,
+                and stored documents use AES-256 encryption.
               </p>
             </article>
             <aside class="pledge pledge-honest">
               <h3>The honest part</h3>
               <p>
-                No automated system catches 100% of PII. Nothing leaves without your review,
-                and every proposed box is shown before download.
+                No automated system catches 100% of PII. Review mode lets you inspect and
+                adjust every box. Check automatic results before sharing sensitive documents.
               </p>
             </aside>
           </div>
@@ -317,7 +316,10 @@
           <div class="terminal" aria-hidden="true">
             <div class="terminal-bar"><i></i><i></i><i></i></div>
             <pre><code><span class="t-prompt">$</span> git clone https://github.com/pujan789/pii-redaction
-<span class="t-prompt">$</span> cd pii-redaction &amp;&amp; docker compose up
+<span class="t-prompt">$</span> cd pii-redaction
+<span class="t-prompt">$</span> cp .env.example .env
+<span class="t-dim"># Set a random PII_TOKEN_PEPPER in .env</span>
+<span class="t-prompt">$</span> docker compose up --build
 <span class="t-dim"># redacting at http://localhost:8080</span></code></pre>
           </div>
         </div>
@@ -349,10 +351,10 @@
               <ul>
                 <li>Docker Compose setup</li>
                 <li>Use your own GPU and storage</li>
-                <li>Set the capacity you need</li>
+                <li>Optional installation help: $100/hour</li>
                 <li>Documents stay on your network</li>
               </ul>
-              <a class="btn btn-primary" href="https://github.com/pujan789/pii-redaction">View self-hosting guide</a>
+              <a class="btn btn-primary" href="./self-hosting/">View costs &amp; self-hosting guide</a>
             </article>
           </div>
         </div>
@@ -368,9 +370,9 @@
           <details>
             <summary>Is my data used to train AI models?</summary>
             <p>
-              No. The model runs on a dedicated GPU worker on SOC 2 compliant infrastructure in
-              the USA, your documents never reach OpenAI, Google, or another AI vendor, and
-              every file is deleted after download or within one hour.
+              No. Gemma 4 E2B runs on an AWS EC2 GPU worker in our AWS account in the USA.
+              Document inference does not use a third-party AI API, and every file is deleted
+              after download or within one hour.
             </p>
           </details>
           <details>
@@ -395,7 +397,9 @@
             <p>
               Yes. The pipeline is licensed under AGPL-3.0 with a noncommercial private-use
               exception and runs with Docker Compose on your own GPU, so client documents never
-              leave your network.
+              leave your network. Larger firms can <a class="text-link" href="./self-hosting/">see hardware,
+              running costs, and measured throughput</a>. For installation on your own servers
+              at $100/hour, email <a class="text-link" href="mailto:pujan@taxhance.com">pujan@taxhance.com</a>.
             </p>
           </details>
           <details>
@@ -420,7 +424,7 @@
     <footer class="site-footer">
       <div class="wrap footer-grid">
         <div>
-          <a class="wordmark" href="https://taxhance.com/">
+          <a class="wordmark" href="./" aria-label="Taxhance PII Redaction home">
             <img class="wordmark-logo" src="/taxhance-logo.png" alt="Taxhance" />
             <span class="wordmark-tag">PII Redaction</span>
           </a>
@@ -432,6 +436,9 @@
           <a href="#open-source">Open source</a>
           <a href="#pricing">Pricing</a>
           <a href="https://taxhance.com/">Taxhance home</a>
+          <a href="https://github.com/pujan789/pii-redaction">GitHub</a>
+          <a href="https://github.com/pujan789/pii-redaction/blob/main/SECURITY.md">Security</a>
+          <a href="./self-hosting/">Self-hosting</a>
         </nav>
       </div>
       <div class="wrap footer-legal">

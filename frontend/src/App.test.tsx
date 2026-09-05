@@ -21,6 +21,7 @@ const apiMocks = vi.hoisted(() => ({
 const downloadMocks = vi.hoisted(() => ({
   saveBlobAndDelete: vi.fn(),
 }));
+const zipMocks = vi.hoisted(() => ({ createBatchZip: vi.fn() }));
 
 vi.mock("./api", async () => {
   const actual = await vi.importActual<typeof import("./api")>("./api");
@@ -28,6 +29,7 @@ vi.mock("./api", async () => {
 });
 
 vi.mock("./download", () => downloadMocks);
+vi.mock("./batchDownload", () => zipMocks);
 
 function jobIdFor(file: File): string {
   return `job-${file.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
@@ -66,10 +68,18 @@ function fileInFolder(name: string, path: string, type: string): File {
   return file;
 }
 
+function renderManualDesk() {
+  const view = render(<App />);
+  const manualMode = screen.queryByRole("radio", { name: /review each document/i });
+  if (manualMode) fireEvent.click(manualMode);
+  return view;
+}
+
 describe("PII redaction desk", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    window.history.replaceState({}, "", "/");
   });
 
   beforeEach(() => {
@@ -87,21 +97,72 @@ describe("PII redaction desk", () => {
     apiMocks.getResultBlob.mockResolvedValue(new Blob(["redacted"], { type: "application/pdf" }));
     apiMocks.getPageBlob.mockResolvedValue(new Blob(["preview"], { type: "image/jpeg" }));
     apiMocks.deleteJob.mockResolvedValue(undefined);
+    zipMocks.createBatchZip.mockResolvedValue(new Blob(["zip"], { type: "application/zip" }));
     vi.stubGlobal("confirm", vi.fn(() => true));
     downloadMocks.saveBlobAndDelete.mockImplementation(
       async (_blob: Blob, deleteRemote: () => Promise<void>) => deleteRemote(),
     );
   });
 
-  it("explains the auditable workflow and deletion window", () => {
+  it.each([
+    ["/app/", "/"],
+    ["/app", "/"],
+    ["/app/index.html", "/"],
+    ["/pii-redaction/app/", "/pii-redaction/"],
+    ["/pii-redaction/app", "/pii-redaction/"],
+    ["/pii-redaction/app/index.html", "/pii-redaction/"],
+  ])("keeps project navigation in its hosting base at %s", (path, root) => {
+    window.history.replaceState({}, "", path);
     render(<App />);
+    expect(screen.getByRole("link", { name: "Taxhance PII Redaction home" })).toHaveAttribute("href", root);
+    expect(screen.getByRole("img", { name: "Taxhance" })).toHaveAttribute("src", `${root}taxhance-logo.png`);
+    expect(screen.getByRole("link", { name: /privacy and redaction policy/i })).toHaveAttribute("href", `${root}#privacy`);
+    expect(screen.getByRole("link", { name: "Self-hosting" })).toHaveAttribute("href", `${root}self-hosting/`);
+    expect(screen.getByRole("link", { name: "Self-hosting" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "Source code" })).toHaveAttribute("href", "https://github.com/pujan789/pii-redaction");
+  });
+
+  it("defaults a 50-file upload to a batch workspace and one ZIP download", async () => {
+    render(<App />);
+    expect(screen.getByRole("radio", { name: /redact automatically/i })).toBeChecked();
+    const files = Array.from({ length: 50 }, (_, index) => new File(["synthetic"], `document-${index}.pdf`, { type: "application/pdf" }));
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50));
+    const download = screen.getByRole("button", { name: /download all 50 PDFs/i });
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(50);
+    expect(apiMocks.finalizeJob).not.toHaveBeenCalled();
+    expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50);
+    expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByRole("heading", { name: /your documents are ready/i })).toHaveFocus();
+    fireEvent.click(download);
+    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip"));
+    expect(zipMocks.createBatchZip.mock.calls[0][0]).toHaveLength(50);
+    expect(screen.getByText(/download started/i)).toBeVisible();
+  });
+
+  it("filters failed files without hiding completed batch downloads", async () => {
+    apiMocks.createJob.mockRejectedValueOnce(new Error("offline"));
+    render(<App />);
+    const files = ["first", "second", "third"].map((name) => new File(["synthetic"], `${name}.pdf`, { type: "application/pdf" }));
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
+    expect(await screen.findByRole("button", { name: /download 2 ready PDFs/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /needs attention 1/i }));
+    expect(screen.getByText("first.pdf")).toBeVisible();
+    expect(screen.queryByText("second.pdf")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /retry failed files/i }));
+    expect(await screen.findByRole("button", { name: /download all 3 PDFs/i })).toBeEnabled();
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(4);
+  });
+
+  it("explains the auditable workflow and deletion window", () => {
+    renderManualDesk();
     expect(screen.getByRole("heading", { name: /redact a tax document/i })).toBeVisible();
     expect(screen.getByText(/deleted after download or within 1 hour/i)).toBeVisible();
     expect(screen.getByText(/free to use · no account/i)).toBeVisible();
   });
 
   it("offers accessible multi-file and folder pickers", () => {
-    render(<App />);
+    renderManualDesk();
 
     expect(screen.getByRole("button", { name: /choose files/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /choose folder/i })).toBeEnabled();
@@ -121,7 +182,7 @@ describe("PII redaction desk", () => {
   });
 
   it("queues supported files from a mixed folder selection", async () => {
-    render(<App />);
+    renderManualDesk();
     const folder = screen.getByTestId("folder-input");
     const pdf = fileInFolder("return.PDF", "client/2025/return.PDF", "");
     const jpeg = fileInFolder("scan.jpeg", "client/receipts/scan.jpeg", "image/jpeg");
@@ -157,7 +218,7 @@ describe("PII redaction desk", () => {
   });
 
   it("filters every file dropped together", async () => {
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const unsupported = new File(["notes"], "notes.txt", { type: "text/plain" });
     const second = new File(["second"], "second.tif", { type: "image/tiff" });
@@ -176,7 +237,7 @@ describe("PII redaction desk", () => {
   });
 
   it("starts the next queued file after downloading the current result", async () => {
-    render(<App />);
+    renderManualDesk();
     const files = screen.getByTestId("files-input");
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.png", { type: "image/png" });
@@ -218,7 +279,7 @@ describe("PII redaction desk", () => {
           finishUpload = resolve;
         }),
     );
-    render(<App />);
+    renderManualDesk();
     const file = new File(["first"], "first.pdf", { type: "application/pdf" });
 
     fireEvent.change(screen.getByTestId("files-input"), { target: { files: [file] } });
@@ -231,7 +292,7 @@ describe("PII redaction desk", () => {
 
   it("preserves the remaining queue when a file cannot start", async () => {
     apiMocks.createJob.mockRejectedValueOnce(new Error("offline"));
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -248,7 +309,7 @@ describe("PII redaction desk", () => {
   });
 
   it("deletes the active job and clears pending files when a batch is cancelled", async () => {
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -278,7 +339,7 @@ describe("PII redaction desk", () => {
       page_count: null,
       pages_completed: 0,
     }));
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -299,7 +360,7 @@ describe("PII redaction desk", () => {
 
   it("continues a batch when expiry cleanup already deleted the downloaded job", async () => {
     apiMocks.deleteJob.mockRejectedValueOnce(new ApiError("job_not_found", 404));
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -324,7 +385,7 @@ describe("PII redaction desk", () => {
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(completeJob("restored-job"));
 
-    render(<App />);
+    renderManualDesk();
 
     const retry = await screen.findByRole("button", { name: /retry status/i });
     fireEvent.click(screen.getByRole("button", { name: /dismiss error/i }));
@@ -336,7 +397,7 @@ describe("PII redaction desk", () => {
   });
 
   it("finishes a batch without claiming skipped files were downloaded", async () => {
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -354,7 +415,7 @@ describe("PII redaction desk", () => {
   });
 
   it("does not leave a stale advancement message after deleting the final batch file", async () => {
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -372,7 +433,7 @@ describe("PII redaction desk", () => {
   });
 
   it("describes every rejection reason when no selected file can be queued", () => {
-    render(<App />);
+    renderManualDesk();
     const oversized = new File(["large"], "large.pdf", { type: "application/pdf" });
     Object.defineProperty(oversized, "size", { value: 50 * 1024 * 1024 + 1 });
     const empty = new File([], "empty.png", { type: "image/png" });
@@ -391,7 +452,7 @@ describe("PII redaction desk", () => {
 
   it("keeps the local queue when batch cancellation is declined", async () => {
     vi.mocked(window.confirm).mockReturnValueOnce(false);
-    render(<App />);
+    renderManualDesk();
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
@@ -429,7 +490,7 @@ describe("PII redaction desk", () => {
         created_at: "2099-01-01T00:00:00Z",
       });
 
-    render(<App />);
+    renderManualDesk();
 
     const retry = await screen.findByRole("button", { name: /retry review/i });
     fireEvent.click(screen.getByRole("button", { name: /dismiss error/i }));
@@ -448,7 +509,7 @@ describe("PII redaction desk", () => {
           finishDownload = resolve;
         }),
     );
-    render(<App />);
+    renderManualDesk();
     const file = new File(["first"], "first.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByTestId("files-input"), { target: { files: [file] } });
 
@@ -486,7 +547,7 @@ describe("PII redaction desk", () => {
           }),
       );
 
-    const { unmount } = render(<App />);
+    const { unmount } = renderManualDesk();
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(apiMocks.getJob).toHaveBeenCalledTimes(1);
 

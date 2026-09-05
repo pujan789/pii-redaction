@@ -29,8 +29,26 @@ storage, database, encryption key, IAM roles, network boundary, and deployment s
 - Redaction is fail-closed: malformed model output, unreadable pages, or residual
   deterministic identifiers prevent a document from being marked complete.
 
-No automated system can promise perfect PII recognition. The UI therefore labels the
-result as requiring human review and exposes every proposed redaction before download.
+No automated system can promise perfect PII recognition. The UI asks clients to check
+automatic results before sharing. Manual review exposes each proposed redaction for editing.
+
+## Batch workflow
+
+Selecting multiple files or a folder defaults to automatic redaction. The browser runs
+two jobs at a time, receives each completed PDF, and deletes its server copy before
+advancing. Clients see one document table with progress, optional previews, failure
+retries, and a single ZIP download. Files that fail are excluded from downloads and
+remain visible for retry; capacity limits pause the waiting queue. The default hourly
+allowance is 100 documents per network, with the existing five-active-job limit intact.
+
+Completed PDFs and waiting source files stay in this tab only. Keep it open until the
+download finishes: refreshing loses those local files. In-flight server jobs can be
+recovered from their tab-scoped tokens; filenames and document contents are not persisted
+in browser storage. ZIP exports use neutral numbered filenames matching the document
+table and must total less than 4 GB; individual downloads remain available.
+
+Choose **Review each document** before uploading to retain the manual editing workflow.
+Single-file uploads continue to use manual review.
 
 ## Default redaction policy
 
@@ -61,6 +79,13 @@ docs/                   Threat model, operations, and evaluation protocol
 ```
 
 ## Local self-hosting
+
+Larger firms can run the full pipeline on their own servers or in their own cloud
+account. For installation assistance at **$100/hour (USD)**, contact Pujan at
+[pujan@taxhance.com](mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation).
+The software is free under the project license; hardware and hosting are separate.
+See [self-hosting costs and performance](docs/SELF_HOSTING.md) for our AWS reference
+costs and measured page throughput.
 
 Requirements: Docker with Compose and an NVIDIA GPU with the Container Toolkit.
 

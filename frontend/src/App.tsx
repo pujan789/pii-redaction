@@ -12,6 +12,8 @@ import {
   uploadFile,
 } from "./api";
 import { saveBlobAndDelete } from "./download";
+import { BatchQueue, readBatchSession } from "./batch";
+import BatchWorkspace from "./BatchWorkspace";
 import {
   redactedFilename,
   selectUploadFiles,
@@ -80,6 +82,11 @@ function ShieldIcon() {
 }
 
 export default function App() {
+  const [automaticBatch, setAutomaticBatch] = useState(true);
+  const [batchQueue, setBatchQueue] = useState<BatchQueue | null>(() => {
+    const restored = readBatchSession();
+    return restored ? new BatchQueue([], restored) : null;
+  });
   const [credentials, setCredentials] = useState<JobCredentials | null>(() => readSession());
   const [job, setJob] = useState<Job | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
@@ -289,6 +296,12 @@ export default function App() {
       return;
     }
 
+    if (selection.accepted.length > 1 && automaticBatch) {
+      setNotice(skippedNotes.join(" ") || null);
+      setBatchQueue(new BatchQueue(selection.accepted));
+      return;
+    }
+
     const [first, ...pending] = selection.accepted;
     const notes: string[] = [];
     if (selection.accepted.length > 1) {
@@ -490,6 +503,8 @@ export default function App() {
   const nextFile = pendingFiles[0];
   const nextFileLabel = nextFile ? nextFile.webkitRelativePath || nextFile.name : null;
 
+  const siteRoot = window.location.pathname.replace(/\/app(?:\/index\.html|\/)?$/, "/");
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -498,8 +513,8 @@ export default function App() {
 
       <header className="topbar">
         <div className="topbar-inner">
-          <a className="wordmark" href="/pii-redaction" aria-label="Taxhance PII Redaction home">
-            <img src="/taxhance-logo.png" alt="Taxhance" />
+          <a className="wordmark" href={siteRoot} aria-label="Taxhance PII Redaction home">
+            <img src={`${siteRoot}taxhance-logo.png`} alt="Taxhance" />
             <span className="wordmark-divider" aria-hidden="true" />
             <strong>PII Redaction</strong>
           </a>
@@ -534,7 +549,13 @@ export default function App() {
           </div>
         ) : null}
 
-        {!job && !credentials && batchTotal === 0 ? (
+        {batchQueue ? (
+          <BatchWorkspace queue={batchQueue} onClose={() => {
+            setBatchQueue(null);
+            setNotice(null);
+            window.setTimeout(() => intakeTitle.current?.focus(), 0);
+          }} />
+        ) : !job && !credentials && batchTotal === 0 ? (
           <section className="intake-layout" aria-labelledby="intake-title">
             <div className="intake-heading">
               <span className="utility-badge">Free to use · no account</span>
@@ -542,8 +563,8 @@ export default function App() {
                 Redact a tax document
               </h1>
               <p>
-                Upload a document, check every suggested redaction, and download a flattened PDF.
-                The model runs on our own AWS infrastructure—not a third-party AI API.
+                Upload a document or an entire folder. Redact automatically, or review
+                each file before downloading.
               </p>
             </div>
 
@@ -558,8 +579,8 @@ export default function App() {
               <div>
                 <ShieldIcon />
                 <span>
-                  <strong>You approve every box</strong>
-                  Add or remove redactions before export.
+                  <strong>Your choice of workflow</strong>
+                  Automatic batches or detailed manual review.
                 </span>
               </div>
               <div>
@@ -572,6 +593,19 @@ export default function App() {
             </div>
 
             <div className="upload-card">
+              <fieldset className="batch-mode">
+                <legend>When you upload multiple files</legend>
+                <div className="batch-mode-options">
+                  <label className={automaticBatch ? "is-selected" : ""}>
+                    <input type="radio" name="batch-mode" checked={automaticBatch} onChange={() => setAutomaticBatch(true)} />
+                    <span><strong>Redact automatically</strong><small>Process every file and download together.</small></span>
+                  </label>
+                  <label className={!automaticBatch ? "is-selected" : ""}>
+                    <input type="radio" name="batch-mode" checked={!automaticBatch} onChange={() => setAutomaticBatch(false)} />
+                    <span><strong>Review each document</strong><small>Adjust suggested redactions before export.</small></span>
+                  </label>
+                </div>
+              </fieldset>
               <div
                 className={`drop-zone ${dragging ? "is-dragging" : ""} ${busyLabel ? "is-busy" : ""}`}
                 role="group"
@@ -645,7 +679,7 @@ export default function App() {
               </p>
             </div>
 
-            <a className="back-link" href="/pii-redaction#privacy">
+            <a className="back-link" href={`${siteRoot}#privacy`} target="_blank" rel="noopener noreferrer">
               Read the privacy and redaction policy
             </a>
           </section>
@@ -872,11 +906,11 @@ export default function App() {
       </main>
 
       <footer>
-        <span>Qwen3-VL-8B-Instruct · self-hosted on AWS</span>
+        <span>Gemma 4 E2B · hosted on AWS EC2</span>
         <nav aria-label="Project information">
-          <a href="https://github.com/TaxHance/pii-redaction">Source code</a>
-          <a href="https://github.com/TaxHance/pii-redaction/blob/main/SECURITY.md">Security</a>
-          <a href="https://github.com/TaxHance/pii-redaction/blob/main/README.md">Self-hosting</a>
+          <a href="https://github.com/pujan789/pii-redaction" target="_blank" rel="noopener noreferrer">Source code</a>
+          <a href="https://github.com/pujan789/pii-redaction/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">Security</a>
+          <a href={`${siteRoot}self-hosting/`} target="_blank" rel="noopener noreferrer">Self-hosting</a>
         </nav>
       </footer>
     </div>

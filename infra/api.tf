@@ -27,7 +27,7 @@ locals {
     PII_RETENTION_CLEANUP_MARGIN_MINUTES = "5"
     PII_MAX_UPLOAD_BYTES                 = "52428800"
     PII_MAX_PAGES                        = "300"
-    PII_MAX_JOBS_PER_IP_PER_HOUR         = "30"
+    PII_MAX_JOBS_PER_IP_PER_HOUR         = "100"
     PII_MAX_ACTIVE_JOBS_PER_IP           = "5"
     PII_MAX_QUEUE_DEPTH                  = "500"
     PII_MODEL_ID                         = var.model_id

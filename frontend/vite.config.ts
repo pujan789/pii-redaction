@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         landing: "index.html",
         app: "app/index.html",
+        selfHosting: "self-hosting/index.html",
       },
     },
   },
