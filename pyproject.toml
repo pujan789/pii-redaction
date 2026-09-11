@@ -24,7 +24,7 @@ dependencies = [
 worker = [
   "pdfplumber>=0.11,<1",
   "Pillow>=12,<13",
-  "pypdfium2>=4.30,<5",
+  "pypdfium2>=4.30,<6",
   "pytesseract>=0.3.13,<1",
   "rapidfuzz>=3.9,<4",
 ]
