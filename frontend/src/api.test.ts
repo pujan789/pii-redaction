@@ -17,3 +17,18 @@ it("requests automatic finalization explicitly while preserving manual review by
   await createJob(file, true);
   expect(JSON.parse(fetch.mock.calls[1][1].body).auto_finalize).toBe(true);
 });
+
+it("turns a validation error body into a stable code instead of an object", async () => {
+  const { getJob, ApiError } = await import("./api");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ detail: [{ loc: ["body", "filename"], msg: "too long" }] }),
+    }),
+  );
+  await expect(getJob({ jobId: "j", token: "t" })).rejects.toMatchObject(
+    new ApiError("invalid_request", 422),
+  );
+});

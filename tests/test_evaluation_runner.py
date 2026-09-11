@@ -59,7 +59,8 @@ class _BarrierDetector(NoopDetector):
     def __init__(self) -> None:
         self.barrier = threading.Barrier(2)
 
-    def detect_document(self, pages: object) -> list[object]:
+    def detect_document(self, pages: object, progress: object = None) -> list[object]:
+        del progress
         self.barrier.wait(timeout=10)
         return []
 

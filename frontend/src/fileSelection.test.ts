@@ -65,3 +65,21 @@ describe("upload file selection", () => {
     expect(redactedFilename(12, 125)).toBe("redacted-012-of-125.pdf");
   });
 });
+
+describe("original-name downloads", () => {
+  it("derives a safe redacted name from the original path", async () => {
+    const { originalRedactedFilename } = await import("./fileSelection");
+    expect(originalRedactedFilename("client/2025/W-2 Smith.pdf")).toBe("W-2 Smith-redacted.pdf");
+    expect(originalRedactedFilename("scan.JPEG")).toBe("scan-redacted.pdf");
+    expect(originalRedactedFilename('bad:name?<>|"*.pdf')).toBe("bad-name-redacted.pdf");
+  });
+
+  it("keeps names unique within one batch", async () => {
+    const { uniqueRedactedFilenames } = await import("./fileSelection");
+    expect(uniqueRedactedFilenames(["a/w2.pdf", "b/w2.pdf", "w2.pdf"])).toEqual([
+      "w2-redacted.pdf",
+      "w2-redacted-2.pdf",
+      "w2-redacted-3.pdf",
+    ]);
+  });
+});

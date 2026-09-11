@@ -11,7 +11,7 @@ try {
         --frozen `
         --no-dev `
         --extra worker `
-        --extra model `
+        `
         --no-emit-project `
         --output-file requirements/worker.txt
     if ($LASTEXITCODE -ne 0) { throw "Failed to export the worker lockfile." }

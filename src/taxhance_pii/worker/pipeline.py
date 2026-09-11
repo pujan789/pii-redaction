@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from taxhance_pii.config import Settings
@@ -24,7 +27,7 @@ from taxhance_pii.redaction.renderer import (
     RedactionValidationError,
     render_redacted_pdf,
 )
-from taxhance_pii.repository import JobRepository, StateConflict
+from taxhance_pii.repository import JobNotFound, JobRepository, StateConflict
 from taxhance_pii.storage import BlobStore
 from taxhance_pii.task_queue import TaskQueue
 from taxhance_pii.worker.detector import DETECTOR_VERSION, DetectorError, DocumentDetector
@@ -69,6 +72,19 @@ class WorkerPipeline:
         )
         return input_path, pages
 
+    def _progress_reporter(self, job_id: str) -> Callable[[], None]:
+        """Per-page progress writes; a vanished or re-owned job is ignored."""
+        lock = threading.Lock()
+        completed = 0
+
+        def report() -> None:
+            nonlocal completed
+            with lock, contextlib.suppress(StateConflict, JobNotFound):
+                completed += 1
+                self.repository.update(job_id, {JobStatus.DETECTING}, pages_completed=completed)
+
+        return report
+
     def _detect(self, job: JobRecord) -> None:
         with tempfile.TemporaryDirectory(prefix=f"pii-{job.job_id}-") as raw_directory:
             directory = Path(raw_directory)
@@ -86,7 +102,9 @@ class WorkerPipeline:
                     encode_preview(page.image),
                     "image/jpeg",
                 )
-            detections = self.detector.detect_document(pages)
+            detections = self.detector.detect_document(
+                pages, progress=self._progress_reporter(job.job_id)
+            )
             self._assert_active(job.job_id, JobStatus.DETECTING)
             self.repository.update(
                 job.job_id,
@@ -164,19 +182,26 @@ class WorkerPipeline:
                     page.image.close()
         self._assert_active(job.job_id, JobStatus.REDACTING)
         self.blobs.put_file(job.output_key, output_path, "application/pdf")
+        self._mark_complete(job, len(pages), len(manifest.detections))
+
+    def _mark_complete(self, job: JobRecord, pages: int, finding_count: int) -> None:
         try:
             self.repository.update(
                 job.job_id,
                 {JobStatus.REDACTING},
                 status=JobStatus.COMPLETE,
-                pages_completed=len(pages),
-                finding_count=len(manifest.detections),
+                pages_completed=pages,
+                finding_count=finding_count,
                 error_code=None,
             )
-        except StateConflict as exc:
-            # A concurrent delete wins; remove any output uploaded during the race.
-            self.blobs.delete_prefix(f"jobs/{job.job_id}")
-            raise JobCancelled("job_deleted") from exc
+        except (StateConflict, JobNotFound) as exc:
+            current = self.repository.get(job.job_id)
+            if current is None or current.status in {JobStatus.DELETED, JobStatus.EXPIRED}:
+                # A concurrent delete wins; remove any output uploaded during the race.
+                self.blobs.delete_prefix(f"jobs/{job.job_id}")
+                raise JobCancelled("job_deleted") from exc
+            # Another worker owns the job now; its output must stay untouched.
+            raise JobCancelled("job_state_changed") from exc
 
     def _assert_active(self, job_id: str, expected: JobStatus) -> None:
         current = self.repository.get(job_id)
@@ -196,6 +221,24 @@ class WorkerPipeline:
             return
         if current.status == JobStatus.COMPLETE:
             return
+        if (
+            isinstance(error, RedactionValidationError)
+            and current.status == JobStatus.REDACTING
+            and not current.auto_finalize
+        ):
+            # The reviewer's approved boxes are still stored; let them fix the
+            # document instead of re-uploading and redoing every edit.
+            try:
+                self.repository.update(
+                    job_id,
+                    {JobStatus.REDACTING},
+                    status=JobStatus.REVIEW_REQUIRED,
+                    error_code=code[:80],
+                )
+            except StateConflict:
+                return
+            logger.error("job_returned_to_review", extra={"job_id": job_id, "error_code": code})
+            return
         try:
             self.repository.update(
                 job_id,
@@ -205,4 +248,8 @@ class WorkerPipeline:
             )
         except StateConflict:
             return
-        logger.error("job_failed", extra={"job_id": job_id, "error_code": code})
+        logger.error(
+            "job_failed",
+            extra={"job_id": job_id, "error_code": code, "error_type": type(error).__name__},
+            exc_info=code == "processing_failed",
+        )

@@ -1,26 +1,31 @@
 name: taxhance-pii-redaction
 
+# Every PII_* key in .env reaches the containers (limits, vLLM tuning, OCR).
+# The values below are the ones Compose must own regardless of .env; set
+# PII_PUBLIC_BASE_URL and PII_ALLOWED_ORIGINS in .env to the URL your staff
+# will open (for example http://redaction.office.local:8080), otherwise
+# uploads only work from a browser on this host.
+x-application-environment: &application-environment
+  PII_RUNTIME: local
+  PII_DATA_DIR: /data
+  PII_PUBLIC_BASE_URL: ${PII_PUBLIC_BASE_URL:-http://localhost:8080}
+  PII_ALLOWED_ORIGINS: ${PII_ALLOWED_ORIGINS:-http://localhost:8080}
+  PII_TOKEN_PEPPER: ${PII_TOKEN_PEPPER:?Set PII_TOKEN_PEPPER in .env}
+  PII_MODEL_ID: ${PII_MODEL_ID:-google/gemma-4-E2B-it}
+  PII_MODEL_REVISION: ${PII_MODEL_REVISION:-3e22461f65e89153144f8adb70e3b8c2cc9845a7}
+  PII_RETENTION_HOURS: 1
+  PII_RETENTION_CLEANUP_MARGIN_MINUTES: 5
+
 services:
   api:
     build:
       context: .
       dockerfile: docker/api.Dockerfile
     restart: unless-stopped
-    environment: &application-environment
-      PII_RUNTIME: local
-      PII_DATA_DIR: /data
-      PII_PUBLIC_BASE_URL: http://localhost:8080
-      PII_ALLOWED_ORIGINS: http://localhost:8080
-      PII_TOKEN_PEPPER: ${PII_TOKEN_PEPPER:?Set PII_TOKEN_PEPPER in .env}
-      PII_MODEL_BACKEND: ${PII_MODEL_BACKEND:-transformers}
-      PII_MODEL_ID: ${PII_MODEL_ID:-Qwen/Qwen3.8-27B}
-      PII_MODEL_REVISION: ${PII_MODEL_REVISION:-1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0}
-      PII_MODEL_DTYPE: ${PII_MODEL_DTYPE:-4bit}
-      PII_LLAMA_MODEL_FILE: ${PII_LLAMA_MODEL_FILE:-gemma-4-E2B-it-UD-Q4_K_XL.gguf}
-      PII_LLAMA_MMPROJ_FILE: ${PII_LLAMA_MMPROJ_FILE:-mmproj-F16.gguf}
-      PII_RETENTION_HOURS: 1
-      PII_RETENTION_CLEANUP_MARGIN_MINUTES: 5
-      PII_MODEL_AUDIT_PASSES: 1
+    env_file:
+      - path: .env
+        required: false
+    environment: *application-environment
     volumes:
       - pii-data:/data
     healthcheck:
@@ -36,16 +41,35 @@ services:
       context: .
       dockerfile: docker/worker.Dockerfile
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *application-environment
+      # The root filesystem is read-only; every cache the model stack writes
+      # lives on the model volume (mirrors the AWS task definition).
       HF_HOME: /models/huggingface
-      TRANSFORMERS_CACHE: /models/huggingface
+      HOME: /models/home
+      XDG_CACHE_HOME: /models/cache
+      TORCH_HOME: /models/torch
+      TORCHINDUCTOR_CACHE_DIR: /models/torchinductor
+      TRITON_CACHE_DIR: /models/triton
+      CUDA_CACHE_PATH: /models/cuda
+      TMPDIR: /tmp
     volumes:
       - pii-data:/data
       - model-cache:/models
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      # The worker exits when vLLM dies; this catches a vLLM that is up but
+      # not answering so Compose restarts the pair.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PII_VLLM_PORT', '8000') + '/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 900s
     gpus: all
     shm_size: 2gb
     read_only: true

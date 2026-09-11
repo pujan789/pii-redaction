@@ -73,8 +73,24 @@ def _service(active: Container | None = None) -> JobService:
 
 
 def _source_ip(request: Request) -> str:
+    """Best-effort client address for the per-network abuse limits.
+
+    On AWS the Lambda sees CloudFront's edge address as the source, so the
+    viewer address comes from the headers CloudFront adds. Locally the API sits
+    behind the bundled nginx (not published), which overwrites X-Real-IP with
+    the real peer address.
+    """
     event = request.scope.get("aws.event")
     if isinstance(event, dict):
+        viewer = request.headers.get("cloudfront-viewer-address")
+        if viewer:
+            return viewer.rsplit(":", 1)[0].strip()
+        forwarded = [part.strip() for part in request.headers.get("x-forwarded-for", "").split(",")]
+        forwarded = [part for part in forwarded if part]
+        if len(forwarded) >= 2:
+            # CloudFront appends the viewer, then API Gateway appends
+            # CloudFront; anything earlier in the list is client-supplied.
+            return forwarded[-2]
         context = event.get("requestContext", {})
         if isinstance(context, dict):
             http = context.get("http", {})
@@ -83,6 +99,9 @@ def _source_ip(request: Request) -> str:
             identity = context.get("identity", {})
             if isinstance(identity, dict) and identity.get("sourceIp"):
                 return str(identity["sourceIp"])
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
     return request.client.host if request.client else "unknown"
 
 

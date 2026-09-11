@@ -168,7 +168,7 @@ variable "monthly_budget_usd" {
 }
 
 variable "budget_alert_email" {
-  description = "Optional email for AWS Budget notifications."
+  description = "Optional email for AWS Budget and CloudWatch alarm notifications (SNS confirmation required)."
   type        = string
   default     = ""
 }

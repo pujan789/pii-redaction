@@ -7,6 +7,7 @@ import {
   submitJob,
   uploadFile,
 } from "./api";
+import { CAPACITY_CODES, describeFailure, messageForCode } from "./errorMessages";
 import { redactedFilename } from "./fileSelection";
 import type { Job, JobCredentials } from "./types";
 
@@ -58,30 +59,11 @@ export function readBatchSession(): StoredItem[] | null {
 }
 
 function messageFor(reason: unknown): string {
-  if (reason instanceof Error && reason.message === "source_unavailable") {
-    return "The source file was cleared on reload. Reselect the original in a new batch.";
-  }
-  if (reason instanceof ApiError) {
-    const messages: Record<string, string> = {
-      hourly_abuse_limit:
-        "The hourly processing allowance has been reached. Resume later; your waiting files are still here.",
-      active_job_abuse_limit:
-        "Other documents are still active on this network. Resume when they finish.",
-      service_busy: "The processing queue is full. Resume in a moment.",
-      job_not_found:
-        "This document expired or was deleted. Retry to upload it again.",
-      file_signature_mismatch: "The file contents do not match its extension.",
-      residual_identifier_detected:
-        "A sensitive identifier remained in the output. This document was not released.",
-      model_output_invalid:
-        "The detector could not produce a valid result. This document was not released.",
-    };
-    return (
-      messages[reason.code] ??
-      "This document could not be processed. Retry this file."
-    );
-  }
-  return "The connection was interrupted. Retry this file; the rest of your batch can continue.";
+  return describeFailure(reason);
+}
+
+function pauseMessage(code: string): string {
+  return `${messageForCode(code)} Your waiting files are still here; resume when ready.`;
 }
 
 // Only two documents occupy server slots at once. Results are received in full
@@ -276,18 +258,12 @@ export class BatchQueue {
       }
       this.update(item.position, { status: "ready" });
     } catch (reason) {
-      const capacityError =
-        reason instanceof ApiError &&
-        [
-          "hourly_abuse_limit",
-          "active_job_abuse_limit",
-          "service_busy",
-        ].includes(reason.code);
+      const capacityError = reason instanceof ApiError && CAPACITY_CODES.has(reason.code);
       if (capacityError) {
         this.state = {
           ...this.state,
           paused: true,
-          pauseReason: messageFor(reason),
+          pauseReason: pauseMessage(reason.code),
         };
         this.update(item.position, { status: "waiting" });
       } else {

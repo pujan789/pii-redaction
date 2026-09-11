@@ -43,6 +43,8 @@ class JobRepository(Protocol):
 
     def claim_local_task(self) -> JobRecord | None: ...
 
+    def requeue_in_flight(self) -> int: ...
+
 
 def _epoch(value: datetime) -> int:
     return int(value.timestamp())
@@ -252,6 +254,35 @@ class SQLiteJobRepository:
                 raise StateConflict("concurrent_claim")
         return updated
 
+    def requeue_in_flight(self) -> int:
+        """Return interrupted in-flight rows to the queue (single local worker only)."""
+        requeue = {
+            JobStatus.DETECTING: JobStatus.QUEUED_DETECTION,
+            JobStatus.REDACTING: JobStatus.QUEUED_REDACTION,
+        }
+        count = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT payload FROM jobs WHERE status IN (?, ?)",
+                (JobStatus.DETECTING.value, JobStatus.REDACTING.value),
+            ).fetchall()
+            for row in rows:
+                current = _deserialize(row["payload"])
+                data = current.model_dump()
+                data.update(
+                    status=requeue[current.status],
+                    updated_at=utc_now(),
+                    version=current.version + 1,
+                )
+                updated = JobRecord.model_validate(data)
+                connection.execute(
+                    "UPDATE jobs SET status = ?, version = ?, payload = ? WHERE job_id = ?",
+                    (updated.status.value, updated.version, _serialize(updated), updated.job_id),
+                )
+                count += 1
+        return count
+
 
 class DynamoJobRepository:
     CLIENT_INDEX = "client-created-index"
@@ -371,6 +402,9 @@ class DynamoJobRepository:
 
     def claim_local_task(self) -> JobRecord | None:
         raise NotImplementedError("AWS workers claim tasks from SQS")
+
+    def requeue_in_flight(self) -> int:
+        raise NotImplementedError("AWS workers reclaim interrupted jobs through SQS redelivery")
 
 
 def statuses(values: Iterable[JobStatus]) -> set[JobStatus]:

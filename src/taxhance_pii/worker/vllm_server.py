@@ -61,6 +61,10 @@ class VllmServer:
         self.stop()
         raise RuntimeError("vllm_startup_timeout")
 
+    def poll(self) -> int | None:
+        """Exit code of the vLLM process, or None while it is still running."""
+        return None if self._process is None else self._process.poll()
+
     def stop(self) -> None:
         if self._process is not None and self._process.poll() is None:
             self._process.terminate()

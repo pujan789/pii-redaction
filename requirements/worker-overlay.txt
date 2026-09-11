@@ -1,2 +1,3 @@
-torchvision==0.28.0 \
-    --hash=sha256:028a3d481b37d785605620d7cdad897064c5a55bae2aa1f2658766333e291940
+# Additive, hash-pinned wheels allowed into a release overlay on top of a
+# previously scanned worker image. Empty on purpose: the vLLM base carries the
+# model stack, and the project itself installs from source.

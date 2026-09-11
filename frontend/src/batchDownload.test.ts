@@ -44,3 +44,13 @@ describe("batch ZIP export", () => {
     ).rejects.toThrow("archive_size_limit");
   });
 });
+
+it("adds an index file that maps neutral names back to the originals", async () => {
+  const zip = await createBatchZip(
+    [{ filename: "redacted-01-of-01.pdf", result: new Blob(["%PDF-1"]) }],
+    { filename: "index.csv", content: "position,original\n1,client/w2.pdf\n" },
+  );
+  const entries = unzipSync(new Uint8Array(await zip.arrayBuffer()));
+  expect(Object.keys(entries).sort()).toEqual(["index.csv", "redacted-01-of-01.pdf"]);
+  expect(new TextDecoder().decode(entries["index.csv"])).toContain("client/w2.pdf");
+});

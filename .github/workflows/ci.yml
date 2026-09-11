@@ -30,10 +30,10 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy src
       - run: uv run pytest --cov --cov-report=term-missing
-      - run: uv export --frozen --no-dev --extra worker --extra model --no-hashes --output-file /tmp/requirements.txt
+      - run: uv export --frozen --no-dev --extra worker --no-hashes --output-file /tmp/requirements.txt
       - run: uv run pip-audit --requirement /tmp/requirements.txt
       - run: uv export --frozen --no-dev --no-emit-project --output-file requirements/api.txt
-      - run: uv export --frozen --no-dev --extra worker --extra model --no-emit-project --output-file requirements/worker.txt
+      - run: uv export --frozen --no-dev --extra worker --no-emit-project --output-file requirements/worker.txt
       - run: git diff --exit-code -- requirements/
 
   frontend:

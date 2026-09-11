@@ -12,37 +12,60 @@ import {
   uploadFile,
 } from "./api";
 import { saveBlobAndDelete } from "./download";
-import { BatchQueue, readBatchSession } from "./batch";
+import { BatchQueue, readBatchSession, type BatchItem } from "./batch";
 import BatchWorkspace from "./BatchWorkspace";
+import { friendlyError, messageForCode } from "./errorMessages";
 import {
   redactedFilename,
   selectUploadFiles,
   SUPPORTED_FILE_ACCEPT,
 } from "./fileSelection";
+import PdfPreview from "./PdfPreview";
 import ReviewCanvas from "./ReviewCanvas";
-import type { Detection, Job, JobCredentials, Manifest } from "./types";
+import { sameDetections, summarizeDetections } from "./reviewSummary";
+import type { Detection, Job, JobCredentials, JobStatus, Manifest } from "./types";
 
 const SESSION_KEY = "taxhance-pii-active-job";
-const PROCESSING = new Set([
+const PROCESSING = new Set<JobStatus>([
   "queued_detection",
   "detecting",
   "queued_redaction",
   "redacting",
 ]);
+const QUEUED = new Set<JobStatus>(["queued_detection", "queued_redaction"]);
+const COLD_START_HINT_AFTER_MS = 60_000;
+const DEADLINE_WARNING_MINUTES = 10;
+const UNDO_LIMIT = 50;
+const REPORT_PROBLEM_HREF =
+  "mailto:pujan@taxhance.com?subject=PII%20Redaction%20problem&body=Please%20describe%20what%20happened.%20Do%20not%20attach%20client%20documents.";
 
-const ERROR_MESSAGES: Record<string, string> = {
-  upload_too_large: "That file is over the 50 MB abuse-prevention limit.",
-  upload_empty: "Empty files cannot be processed.",
-  unsupported_file_type: "Choose a PDF, PNG, JPEG, or TIFF file.",
-  hourly_abuse_limit: "This network has started many jobs recently. Please try again later.",
-  active_job_abuse_limit: "Finish or delete the active job before starting another one.",
-  service_busy: "The processing queue is full right now. Please try again shortly.",
-  file_signature_mismatch: "The file contents do not match the file extension.",
-  model_output_invalid: "The detector returned an unsafe result, so no document was released.",
-  processing_failed: "Processing stopped safely. Your original is still scheduled for deletion.",
-  delete_failed:
-    "Immediate deletion could not be confirmed. Please retry; automatic expiry cleanup remains active.",
+const STATUS_LABELS: Record<JobStatus, string> = {
+  awaiting_upload: "Upload incomplete",
+  queued_detection: "In line",
+  detecting: "Finding sensitive data",
+  review_required: "Ready for review",
+  queued_redaction: "In line for redaction",
+  redacting: "Applying redactions",
+  complete: "Ready",
+  failed: "Could not process",
+  deleted: "Deleted",
+  expired: "Expired",
 };
+
+function headlineFor(status: JobStatus | undefined): string {
+  switch (status) {
+    case "queued_detection":
+      return "Waiting in line";
+    case "detecting":
+      return "Checking the document for sensitive data…";
+    case "queued_redaction":
+      return "Waiting to apply your redactions";
+    case "redacting":
+      return "Applying your redactions…";
+    default:
+      return "Checking the document for sensitive data…";
+  }
+}
 
 function readSession(): JobCredentials | null {
   try {
@@ -53,15 +76,13 @@ function readSession(): JobCredentials | null {
   }
 }
 
-function remaining(expiresAt: string): string {
-  const milliseconds = Math.max(0, new Date(expiresAt).getTime() - Date.now());
-  const minutes = Math.ceil(milliseconds / 60_000);
-  return minutes <= 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
+function minutesLeft(expiresAt: string): number {
+  return Math.ceil(Math.max(0, new Date(expiresAt).getTime() - Date.now()) / 60_000);
 }
 
-function friendlyError(error: unknown): string {
-  if (error instanceof ApiError) return ERROR_MESSAGES[error.code] ?? `Request failed: ${error.code}`;
-  return "Something interrupted the private workflow. Please try again.";
+function remaining(expiresAt: string): string {
+  const minutes = minutesLeft(expiresAt);
+  return minutes <= 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
 
 function UploadIcon() {
@@ -91,6 +112,9 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [detections, setDetections] = useState<Detection[]>([]);
+  const [history, setHistory] = useState<Detection[][]>([]);
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -113,6 +137,7 @@ export default function App() {
   const refreshSequence = useRef(0);
   const refreshInFlight = useRef<{ jobId: string; sequence: number } | null>(null);
   const lastWorkspaceFocusKey = useRef<string | null>(null);
+  const queuedSince = useRef<number | null>(null);
   const [loadFailure, setLoadFailure] = useState<"status" | "review" | null>(null);
 
   const captureFolderInput = useCallback((element: HTMLInputElement | null) => {
@@ -129,10 +154,14 @@ export default function App() {
     refreshSequence.current += 1;
     sessionStorage.removeItem(SESSION_KEY);
     hasLoadedJob.current = false;
+    queuedSince.current = null;
     setCredentials(null);
     setJob(null);
     setManifest(null);
     setDetections([]);
+    setHistory([]);
+    setResultBlob(null);
+    setPreviewOpen(false);
     setBusyLabel(null);
     setError(null);
     setLoadFailure(null);
@@ -170,11 +199,9 @@ export default function App() {
         if (!isCurrentRequest()) return;
         setManifest(draft);
         setDetections(draft.detections);
+        setHistory([]);
       }
       setLoadFailure(null);
-      if (current.status === "failed") {
-        setError(ERROR_MESSAGES[current.error_code ?? ""] ?? "Processing stopped safely.");
-      }
     } catch (reason) {
       if (!isCurrentRequest()) return;
       if (reason instanceof ApiError && reason.status === 404) {
@@ -183,6 +210,7 @@ export default function App() {
           setError("This document is no longer available. Skip it to continue the batch.");
         } else {
           clearSession();
+          setNotice(messageForCode("job_not_found"));
         }
       } else {
         if (failedStage === "review" || !hasLoadedJob.current) setLoadFailure(failedStage);
@@ -210,6 +238,14 @@ export default function App() {
   }, [job]);
 
   useEffect(() => {
+    if (job && QUEUED.has(job.status)) {
+      queuedSince.current ??= Date.now();
+    } else {
+      queuedSince.current = null;
+    }
+  }, [job]);
+
+  useEffect(() => {
     const focusKey =
       batchTotal > 0
         ? `batch:${batchPosition}`
@@ -226,6 +262,32 @@ export default function App() {
     }
   }, [batchPosition, batchTotal, credentials]);
 
+  const editsDirty = Boolean(manifest && !sameDetections(detections, manifest.detections));
+
+  useEffect(() => {
+    // Review edits live only in this tab until they are approved; waiting
+    // local files never survive a reload either.
+    if (!editsDirty && pendingFiles.length === 0) return;
+    const preventLoss = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventLoss);
+    return () => window.removeEventListener("beforeunload", preventLoss);
+  }, [editsDirty, pendingFiles.length]);
+
+  function updateDetections(next: Detection[]) {
+    setHistory((previous) => [...previous.slice(-(UNDO_LIMIT - 1)), detections]);
+    setDetections(next);
+  }
+
+  function undo() {
+    const previous = history.at(-1);
+    if (!previous) return;
+    setHistory((stack) => stack.slice(0, -1));
+    setDetections(previous);
+  }
+
   async function startFile(file: File, position: number, total: number) {
     if (jobStartInFlight.current) return;
     jobStartInFlight.current = true;
@@ -236,7 +298,7 @@ export default function App() {
     // Source and folder names can contain PII, so browser download history only
     // receives a neutral position-based filename.
     setCurrentDownloadName(redactedFilename(position, total));
-    setBusyLabel("Starting a private job…");
+    setBusyLabel("Starting a private document…");
     let secret: JobCredentials | null = null;
     try {
       const created = await createJob(file);
@@ -244,7 +306,7 @@ export default function App() {
       activeJobId.current = secret.jobId;
       setCredentials(secret);
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(secret));
-      setBusyLabel("Encrypting your upload…");
+      setBusyLabel("Uploading securely…");
       await uploadFile(created, file);
       setBusyLabel("Adding the document to the queue…");
       const submitted = await submitJob(secret);
@@ -290,10 +352,16 @@ export default function App() {
     if (selection.accepted.length === 0) {
       if (skippedNotes.length === 0) return;
       if (selection.unsupportedCount > 0) {
-        skippedNotes.push(ERROR_MESSAGES.unsupported_file_type);
+        skippedNotes.push(messageForCode("unsupported_file_type"));
       }
       setError(skippedNotes.join(" "));
       return;
+    }
+
+    if (selection.accepted.length > 100) {
+      skippedNotes.push(
+        "More than 100 files selected: the batch will pause when the hourly allowance is reached, and you can resume it later from this tab.",
+      );
     }
 
     if (selection.accepted.length > 1 && automaticBatch) {
@@ -317,6 +385,15 @@ export default function App() {
     setBatchPosition(1);
     setNotice(notes.join(" ") || null);
     void startFile(first, 1, selection.accepted.length);
+  }
+
+  function reviewBatchItem(item: BatchItem) {
+    if (!item.file || busyLabel || jobStartInFlight.current || actionInFlight.current) return;
+    setError(null);
+    setNotice(null);
+    setBatchTotal(1);
+    setBatchPosition(1);
+    void startFile(item.file, 1, 1);
   }
 
   function startNextFile(message: string): boolean {
@@ -398,7 +475,7 @@ export default function App() {
       } else if (endedBatch) {
         setNotice(
           hadServerJob
-            ? "The batch ended and the final server-side job was deleted."
+            ? "The batch ended and the final server-side document was deleted."
             : "The batch ended and its local queue was cleared.",
         );
       }
@@ -413,7 +490,7 @@ export default function App() {
   async function approve() {
     if (!credentials || actionInFlight.current || jobStartInFlight.current) return;
     actionInFlight.current = true;
-    setBusyLabel("Flattening the approved redactions…");
+    setBusyLabel("Applying the approved redactions…");
     setError(null);
     try {
       const current = await finalizeJob(credentials, detections);
@@ -430,10 +507,33 @@ export default function App() {
   async function retryStatus() {
     if (!credentials || actionInFlight.current || jobStartInFlight.current) return;
     actionInFlight.current = true;
-    setBusyLabel("Reloading job data…");
+    setBusyLabel("Reloading document status…");
     setError(null);
     try {
       await refresh();
+    } finally {
+      setBusyLabel(null);
+      actionInFlight.current = false;
+    }
+  }
+
+  async function fetchResult(): Promise<Blob> {
+    if (resultBlob) return resultBlob;
+    const blob = await getResultBlob(credentials!);
+    setResultBlob(blob);
+    return blob;
+  }
+
+  async function openPreview() {
+    if (!credentials || actionInFlight.current || jobStartInFlight.current) return;
+    actionInFlight.current = true;
+    setBusyLabel("Loading the redacted PDF…");
+    setError(null);
+    try {
+      await fetchResult();
+      setPreviewOpen(true);
+    } catch (reason) {
+      setError(friendlyError(reason));
     } finally {
       setBusyLabel(null);
       actionInFlight.current = false;
@@ -448,7 +548,7 @@ export default function App() {
     setNotice(null);
     let browserReceivedFile = false;
     try {
-      const blob = await getResultBlob(credentials);
+      const blob = await fetchResult();
       browserReceivedFile = true;
       setBusyLabel("Deleting the server copy…");
       await saveBlobAndDelete(
@@ -474,8 +574,8 @@ export default function App() {
       clearSession();
       setNotice(
         completedBatch > 1
-          ? "The batch is complete. Downloaded PDFs reached this browser, and all server-side jobs were deleted."
-          : "The PDF reached this browser and the server-side job was deleted.",
+          ? "The batch is complete. Downloaded PDFs reached this browser, and all server-side copies were deleted."
+          : "The PDF reached this browser and the server-side copy was deleted.",
       );
     } catch (reason) {
       setBusyLabel(null);
@@ -502,6 +602,17 @@ export default function App() {
   const batchHandled = Math.max(0, batchPosition - 1);
   const nextFile = pendingFiles[0];
   const nextFileLabel = nextFile ? nextFile.webkitRelativePath || nextFile.name : null;
+  const failedJob =
+    job?.status === "failed" ||
+    (job?.status === "awaiting_upload" && !retryFile.current && !busyLabel);
+  const coldStart =
+    job !== null &&
+    QUEUED.has(job.status) &&
+    queuedSince.current !== null &&
+    clock - queuedSince.current >= COLD_START_HINT_AFTER_MS;
+  const deadlineMinutes = job ? minutesLeft(job.expires_at) : null;
+  const deadlineClose = deadlineMinutes !== null && deadlineMinutes <= DEADLINE_WARNING_MINUTES;
+  const showJobSection = Boolean(job || credentials || batchTotal > 0);
 
   const siteRoot = window.location.pathname.replace(/\/app(?:\/index\.html|\/)?$/, "/");
 
@@ -549,13 +660,17 @@ export default function App() {
           </div>
         ) : null}
 
-        {batchQueue ? (
-          <BatchWorkspace queue={batchQueue} onClose={() => {
-            setBatchQueue(null);
-            setNotice(null);
-            window.setTimeout(() => intakeTitle.current?.focus(), 0);
-          }} />
-        ) : !job && !credentials && batchTotal === 0 ? (
+        {!showJobSection && batchQueue ? (
+          <BatchWorkspace
+            queue={batchQueue}
+            onReview={reviewBatchItem}
+            onClose={() => {
+              setBatchQueue(null);
+              setNotice(null);
+              window.setTimeout(() => intakeTitle.current?.focus(), 0);
+            }}
+          />
+        ) : !showJobSection ? (
           <section className="intake-layout" aria-labelledby="intake-title">
             <div className="intake-heading">
               <span className="utility-badge">Free to use · no account</span>
@@ -573,7 +688,7 @@ export default function App() {
                 <ShieldIcon />
                 <span>
                   <strong>Private by design</strong>
-                  Your access key stays in this tab.
+                  Only this browser tab can open your document.
                 </span>
               </div>
               <div>
@@ -598,7 +713,7 @@ export default function App() {
                 <div className="batch-mode-options">
                   <label className={automaticBatch ? "is-selected" : ""}>
                     <input type="radio" name="batch-mode" checked={automaticBatch} onChange={() => setAutomaticBatch(true)} />
-                    <span><strong>Redact automatically</strong><small>Process every file and download together.</small></span>
+                    <span><strong>Redact automatically</strong><small>Process every file and download together. Single files always open in review.</small></span>
                   </label>
                   <label className={!automaticBatch ? "is-selected" : ""}>
                     <input type="radio" name="batch-mode" checked={!automaticBatch} onChange={() => setAutomaticBatch(false)} />
@@ -647,7 +762,7 @@ export default function App() {
                     Choose folder
                   </button>
                 </div>
-                <small>PDF, PNG, JPEG, or TIFF · each file up to 50 MB</small>
+                <small>PDF, PNG, JPEG, or TIFF · each file up to 50 MB and 300 pages</small>
               </div>
               <input
                 ref={fileInput}
@@ -674,8 +789,9 @@ export default function App() {
                 }}
               />
               <p className="upload-note">
-                Use Choose folder to queue supported files from a folder and its subfolders. Document
-                contents are not written to application logs or used for training.
+                Use Choose folder to queue supported files from a folder and its subfolders. Each
+                office network can process up to 100 documents per hour, with 5 active at once.
+                Document contents are not written to application logs or used for training.
               </p>
             </div>
 
@@ -694,8 +810,8 @@ export default function App() {
                 <p className="eyebrow">
                   {batchTotal > 1
                     ? `Private batch · file ${batchPosition} of ${batchTotal}`
-                    : "Private job"}{" "}
-                  · {job?.job_id.slice(0, 8) ?? "restoring"}
+                    : "Private document"}{" "}
+                  · {job ? STATUS_LABELS[job.status] : busyLabel ? "Uploading" : "Reconnecting"}
                 </p>
                 <h1 id="job-title" ref={jobTitle} tabIndex={-1}>
                   {job?.status === "review_required" ? "Review the suggested redactions" : "Document redaction"}
@@ -708,7 +824,10 @@ export default function App() {
               </div>
               <div className="job-actions">
                 {job && (
-                  <span className="expiry-clock" key={clock}>
+                  <span
+                    className={`expiry-clock ${deadlineClose ? "is-warning" : ""}`}
+                    key={clock}
+                  >
                     Auto-deletes in <strong>{remaining(job.expires_at)}</strong>
                   </span>
                 )}
@@ -773,25 +892,48 @@ export default function App() {
                     or mark something that should stay visible.
                   </p>
                 </div>
+                {job.error_code && (
+                  <div className="review-alert" role="alert">
+                    <strong>The redaction check sent this document back.</strong>{" "}
+                    {messageForCode(job.error_code)} Adjust the boxes and approve again.
+                  </div>
+                )}
+                {deadlineClose && (
+                  <div className="review-alert is-warning" role="alert">
+                    This document will be deleted in about {deadlineMinutes} min. Approve it before
+                    then or your edits are lost.
+                  </div>
+                )}
                 <ReviewCanvas
                   credentials={credentials!}
                   manifest={manifest}
                   detections={detections}
-                  onChange={setDetections}
+                  onChange={updateDetections}
                 />
                 <div className="approval-bar">
                   <div>
                     <strong>{detections.length} redactions ready</strong>
-                    <span>The approved pages will be rebuilt as a flattened PDF.</span>
+                    <span className="approval-summary">{summarizeDetections(detections)}</span>
+                    <span>You cannot return to editing after this step.</span>
                   </div>
-                  <button
-                    className="button button-primary"
-                    type="button"
-                    onClick={() => void approve()}
-                    disabled={Boolean(busyLabel)}
-                  >
-                    Approve and flatten PDF
-                  </button>
+                  <div className="approval-actions">
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={undo}
+                      disabled={Boolean(busyLabel) || history.length === 0}
+                    >
+                      Undo
+                    </button>
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      onClick={() => void approve()}
+                      disabled={Boolean(busyLabel)}
+                    >
+                      Apply redactions and build PDF
+                    </button>
+                  </div>
                 </div>
               </>
             ) : job?.status === "complete" ? (
@@ -820,36 +962,96 @@ export default function App() {
                   <button
                     className="button button-secondary"
                     type="button"
+                    onClick={() => void openPreview()}
+                    disabled={Boolean(busyLabel)}
+                  >
+                    Preview redacted PDF
+                  </button>
+                  <button
+                    className="button button-secondary"
+                    type="button"
                     onClick={() => void removeJob(pendingFiles.length > 0)}
                     disabled={Boolean(busyLabel)}
                   >
                     {pendingFiles.length > 0 ? "Skip this file" : "Delete without downloading"}
                   </button>
                 </div>
+                {previewOpen && resultBlob && (
+                  <PdfPreview
+                    title={currentFileLabel ?? "Redacted document"}
+                    blob={resultBlob}
+                    onClose={() => setPreviewOpen(false)}
+                  />
+                )}
+              </div>
+            ) : failedJob && job ? (
+              <div className="processing-card failure-card">
+                <div className="processing-icon" aria-hidden="true">
+                  <ShieldIcon />
+                </div>
+                <p className="eyebrow">
+                  {job.status === "failed" ? "Processing stopped" : "Upload did not finish"}
+                </p>
+                <h2>
+                  {job.status === "failed"
+                    ? "This document could not be processed"
+                    : "This upload did not finish"}
+                </h2>
+                <p>
+                  {job.status === "failed"
+                    ? messageForCode(job.error_code ?? "processing_failed")
+                    : "The file never fully reached the server. Nothing was processed; upload it again to continue."}
+                </p>
+                <div className="batch-recovery">
+                  {pendingFiles.length > 0 ? (
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      onClick={() => void removeJob(true)}
+                      disabled={Boolean(busyLabel)}
+                    >
+                      Skip file and continue
+                    </button>
+                  ) : (
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      onClick={() => void removeJob(false)}
+                      disabled={Boolean(busyLabel)}
+                    >
+                      Upload another document
+                    </button>
+                  )}
+                </div>
+                <p className="report-note">
+                  Think this is a mistake? <a href={REPORT_PROBLEM_HREF}>Tell us what happened</a>.
+                  Please do not attach client documents.
+                </p>
               </div>
             ) : (
               <div className="processing-card" aria-live="polite">
                 <div className="processing-icon" aria-hidden="true">
                   <ShieldIcon />
                 </div>
-                <p className="eyebrow">{job?.status.replaceAll("_", " ") ?? "restoring job"}</p>
+                <p className="eyebrow">
+                  {job ? STATUS_LABELS[job.status] : busyLabel ? "Uploading" : "Reconnecting"}
+                </p>
                 <h2>
                   {busyLabel ??
                     (retryFile.current
                       ? "This file could not be started"
-                      : job?.status === "failed"
-                        ? "This file could not be processed"
-                        : "Checking the document for sensitive data…")}
+                      : headlineFor(job?.status))}
                 </h2>
                 <p>
-                  The detector hides recipient-side PII while keeping payer information, account
-                  numbers, form numbers, and city, state, and postal code available for review.
+                  {coldStart
+                    ? "The redaction worker is starting up. The first document of the day can take up to 20 minutes; keep this tab open and it will continue on its own."
+                    : "The detector hides recipient-side PII while keeping payer information, account numbers, form numbers, and city, state, and postal code available for review."}
                 </p>
                 {!busyLabel &&
                   (retryFile.current ||
                     reviewLoadFailed ||
                     statusLoadFailed ||
-                    (pendingFiles.length > 0 && (!credentials || job?.status === "failed"))) && (
+                    (pendingFiles.length > 0 && !credentials)) && (
                   <div className="batch-recovery">
                     {retryFile.current && (
                       <button
@@ -884,19 +1086,23 @@ export default function App() {
                   </div>
                 )}
                 <div
-                  className="progress-track"
+                  className={`progress-track ${progress === null ? "is-indeterminate" : ""}`}
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={progress ?? undefined}
                   aria-label="Document processing progress"
                 >
-                  <span style={{ width: `${progress ?? 8}%` }} />
+                  <span style={progress === null ? undefined : { width: `${progress}%` }} />
                 </div>
                 <small>
                   {job?.page_count
                     ? `${job.pages_completed} of ${job.page_count} pages`
-                    : "Waiting securely in the queue"}
+                    : job && QUEUED.has(job.status)
+                      ? "Queued behind other documents. Keep this tab open."
+                      : busyLabel
+                        ? "Sending your file over a secure connection"
+                        : "Waiting securely in the queue"}
                 </small>
               </div>
             )}
@@ -911,6 +1117,7 @@ export default function App() {
           <a href="https://github.com/pujan789/pii-redaction" target="_blank" rel="noopener noreferrer">Source code</a>
           <a href="https://github.com/pujan789/pii-redaction/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">Security</a>
           <a href={`${siteRoot}self-hosting/`} target="_blank" rel="noopener noreferrer">Self-hosting</a>
+          <a href={REPORT_PROBLEM_HREF}>Report a problem</a>
         </nav>
       </footer>
     </div>

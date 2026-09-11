@@ -1,7 +1,13 @@
 import { Zip, ZipPassThrough } from "fflate";
 
+export interface ZipIndex {
+  filename: string;
+  content: string;
+}
+
 export async function createBatchZip(
   files: { filename: string; result: Blob }[],
+  index?: ZipIndex,
 ): Promise<Blob> {
   // Classic ZIP offsets are 32-bit. Reject oversized bundles before producing an
   // invalid archive; individual PDF downloads remain available in the workspace.
@@ -30,6 +36,13 @@ export async function createBatchZip(
         );
       }
       entry.push(new Uint8Array(), true);
+    }
+    if (index) {
+      // The index lives only inside the archive, so original names never
+      // reach the browser's download history.
+      const entry = new ZipPassThrough(index.filename);
+      archive.add(entry);
+      entry.push(new TextEncoder().encode(index.content), true);
     }
     archive.end();
     return new Blob(chunks, { type: "application/zip" });
