@@ -15,8 +15,10 @@ async function checked(response: Response): Promise<Response> {
   if (response.ok) return response;
   let code = "request_failed";
   try {
-    const body = (await response.json()) as { error?: string; detail?: string };
-    code = body.error ?? body.detail ?? code;
+    const body = (await response.json()) as { error?: unknown; detail?: unknown };
+    const candidate = body.error ?? body.detail;
+    if (typeof candidate === "string") code = candidate;
+    else if (candidate !== undefined) code = "invalid_request";
   } catch {
     // The status is still surfaced without retaining a possibly sensitive response body.
   }

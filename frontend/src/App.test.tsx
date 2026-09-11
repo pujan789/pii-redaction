@@ -497,7 +497,7 @@ describe("PII redaction desk", () => {
     expect(retry).toBeVisible();
     fireEvent.click(retry);
 
-    expect(await screen.findByRole("button", { name: /approve and flatten/i })).toBeVisible();
+    expect(await screen.findByRole("button", { name: /apply redactions/i })).toBeVisible();
     expect(apiMocks.getManifest).toHaveBeenCalledTimes(2);
   });
 
@@ -524,6 +524,266 @@ describe("PII redaction desk", () => {
 
     await act(async () => finishDownload?.(new Blob(["redacted"], { type: "application/pdf" })));
     expect(await screen.findByRole("heading", { name: /redact a tax document/i })).toHaveFocus();
+  });
+
+  it("explains an expired job instead of silently returning to the intake screen", async () => {
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "old-job", token: "old-token" }),
+    );
+    apiMocks.getJob.mockRejectedValueOnce(new ApiError("job_not_found", 404));
+
+    renderManualDesk();
+
+    expect(await screen.findByRole("heading", { name: /redact a tax document/i })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(/1-hour deletion deadline/i);
+  });
+
+  it("renders a failure card with a plain explanation and a way out", async () => {
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "failed-job", token: "failed-token" }),
+    );
+    apiMocks.getJob.mockResolvedValue({
+      ...completeJob("failed-job"),
+      status: "failed" as const,
+      error_code: "too_many_pages",
+    });
+
+    renderManualDesk();
+
+    expect(await screen.findByRole("heading", { name: /could not be processed/i })).toBeVisible();
+    expect(screen.getByText(/300 pages/i)).toBeVisible();
+    expect(screen.getByText(/could not process/i)).toBeVisible();
+    expect(screen.queryByRole("progressbar", { name: /document processing/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/too_many_pages/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /report a problem/i })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^mailto:/),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /upload another document/i }));
+
+    expect(await screen.findByRole("heading", { name: /redact a tax document/i })).toBeVisible();
+    expect(apiMocks.deleteJob).toHaveBeenCalledWith({ jobId: "failed-job", token: "failed-token" });
+  });
+
+  it("labels a queued job plainly and explains a long cold start", async () => {
+    vi.useFakeTimers();
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "queued-job", token: "queued-token" }),
+    );
+    apiMocks.getJob.mockResolvedValue({
+      ...completeJob("queued-job"),
+      status: "queued_detection" as const,
+      page_count: null,
+      pages_completed: 0,
+    });
+
+    renderManualDesk();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+
+    expect(screen.getByText(/waiting in line/i)).toBeVisible();
+    expect(screen.queryByText(/queued detection/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /document processing/i })).toHaveClass("is-indeterminate");
+    expect(screen.queryByText(/worker is starting/i)).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(95_000));
+    expect(screen.getByText(/worker is starting/i)).toBeVisible();
+  });
+
+  it("does not claim to encrypt the upload", async () => {
+    let finishUpload: (() => void) | undefined;
+    apiMocks.uploadFile.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    renderManualDesk();
+    fireEvent.change(screen.getByTestId("files-input"), {
+      target: { files: [new File(["first"], "first.pdf", { type: "application/pdf" })] },
+    });
+
+    expect(await screen.findByText(/uploading securely/i)).toBeVisible();
+    expect(screen.queryByText(/encrypting/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/restoring/i)).not.toBeInTheDocument();
+    await act(async () => finishUpload?.());
+  });
+
+  it("previews the finished PDF once and reuses it for the download", async () => {
+    // jsdom has no dialog implementation; a closed dialog hides its content.
+    HTMLDialogElement.prototype.showModal = function showModal() {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close() {
+      this.removeAttribute("open");
+    };
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:result") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "done-job", token: "done-token" }),
+    );
+
+    renderManualDesk();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^preview/i }));
+    expect(await screen.findByTitle(/redacted preview/i)).toBeInTheDocument();
+    expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: /close preview/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /download and delete/i }));
+    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalled());
+    expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(1);
+  });
+
+  function reviewJob(jobId: string, errorCode: string | null = null): Job {
+    return { ...completeJob(jobId), status: "review_required", error_code: errorCode };
+  }
+
+  const reviewManifest = {
+    schema_version: 1 as const,
+    job_id: "review-job",
+    page_count: 2,
+    detections: [
+      {
+        id: "ssn-1",
+        page_index: 0,
+        category: "ssn" as const,
+        box: { x1: 100, y1: 100, x2: 300, y2: 140 },
+        confidence: 0.95,
+        source: "regex" as const,
+      },
+      {
+        id: "name-1",
+        page_index: 0,
+        category: "person_name" as const,
+        box: { x1: 100, y1: 200, x2: 300, y2: 240 },
+        confidence: 0.9,
+        source: "model" as const,
+      },
+    ],
+    detector_version: "test",
+    prompt_version: "test",
+    model_id: "test",
+    created_at: "2099-01-01T00:00:00Z",
+  };
+
+  function renderReview(errorCode: string | null = null) {
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "review-job", token: "review-token" }),
+    );
+    apiMocks.getJob.mockResolvedValue(reviewJob("review-job", errorCode));
+    apiMocks.getManifest.mockResolvedValue(reviewManifest);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    return renderManualDesk();
+  }
+
+  it("summarizes the review by category, supports undo, and warns before leaving with edits", async () => {
+    const listen = vi.spyOn(window, "addEventListener");
+    renderReview();
+
+    expect(await screen.findByText(/1 SSN, 1 person name/i)).toBeVisible();
+    expect(screen.getByText(/cannot return to editing/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: /^undo/i })).toBeDisabled();
+
+    fireEvent.click(await screen.findByRole("button", { name: /select ssn/i }));
+    fireEvent.click(screen.getByRole("button", { name: /remove selected box/i }));
+    expect(screen.getByText(/^1 person name$/i)).toBeVisible();
+    expect(listen.mock.calls.some(([type]) => type === "beforeunload")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^undo/i }));
+    expect(screen.getByText(/1 SSN, 1 person name/i)).toBeVisible();
+    listen.mockRestore();
+  });
+
+  it("shows why the redaction check sent the document back to review", async () => {
+    renderReview("residual_identifier_detected");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not released/i);
+    expect(screen.getByRole("button", { name: /apply redactions/i })).toBeEnabled();
+  });
+
+  it("warns when the deletion deadline is close", async () => {
+    sessionStorage.setItem(
+      "taxhance-pii-active-job",
+      JSON.stringify({ jobId: "review-job", token: "review-token" }),
+    );
+    apiMocks.getJob.mockResolvedValue({
+      ...reviewJob("review-job"),
+      expires_at: new Date(Date.now() + 4 * 60_000).toISOString(),
+    });
+    apiMocks.getManifest.mockResolvedValue(reviewManifest);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    renderManualDesk();
+
+    expect(await screen.findByText(/deleted in about 4 min/i)).toBeVisible();
+  });
+
+  it("flags batch documents with no redactions and indexes the ZIP", async () => {
+    render(<App />);
+    const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
+
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    expect(screen.getAllByText(/^no redactions$/i, { selector: "span" })).toHaveLength(2);
+    expect(screen.getByText(/2 documents have no redactions/i)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /no redactions 2/i }));
+    expect(screen.getByText("alpha.pdf")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
+    await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
+    const [entries, index] = zipMocks.createBatchZip.mock.calls[0];
+    expect(entries.map((entry: { filename: string }) => entry.filename)).toEqual([
+      "redacted-01-of-02.pdf",
+      "redacted-02-of-02.pdf",
+    ]);
+    expect(index.filename).toBe("index.csv");
+    expect(index.content).toContain("alpha.pdf");
+    expect(index.content).toContain("redacted-01-of-02.pdf");
+  });
+
+  it("can name batch downloads after the originals on request", async () => {
+    render(<App />);
+    const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /name pdfs after the originals/i }));
+    fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
+    await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
+    expect(zipMocks.createBatchZip.mock.calls[0][0].map((entry: { filename: string }) => entry.filename)).toEqual([
+      "alpha-redacted.pdf",
+      "beta-redacted.pdf",
+    ]);
+  });
+
+  it("hands one batch document to manual review and returns to the batch", async () => {
+    render(<App />);
+    const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /review alpha\.pdf manually/i }));
+
+    expect(await screen.findByRole("heading", { name: /your redacted pdf is ready/i })).toBeVisible();
+    expect(apiMocks.createJob).toHaveBeenLastCalledWith(files[0]);
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(3);
+
+    fireEvent.click(screen.getByRole("button", { name: /delete now/i }));
+    expect(await screen.findByRole("heading", { name: /your documents are ready/i })).toBeVisible();
+  });
+
+  it("states the page and hourly allowances before upload", () => {
+    renderManualDesk();
+    expect(screen.getByText(/300 pages/i)).toBeVisible();
+    expect(screen.getByText(/100 documents per hour/i)).toBeVisible();
   });
 
   it("does not overlap status polls when a request is slow", async () => {

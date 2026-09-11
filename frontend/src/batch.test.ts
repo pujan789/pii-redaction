@@ -296,3 +296,31 @@ describe("automatic batch processing", () => {
     expect(api.createJob).not.toHaveBeenCalled();
   });
 });
+
+describe("batch failure messages", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    sessionStorage.clear();
+    api.createJob.mockImplementation(async (file: File) => ({
+      job_id: file.name,
+      access_token: "token",
+      upload: {},
+    }));
+    api.uploadFile.mockResolvedValue(undefined);
+    api.deleteJob.mockResolvedValue(undefined);
+  });
+
+  it("explains a permanent failure without telling the user to retry", async () => {
+    api.submitJob.mockImplementation(async ({ jobId }: { jobId: string }) => ({
+      ...complete(jobId),
+      status: "failed",
+      error_code: "too_many_pages",
+    }));
+    const queue = new BatchQueue(files(1));
+    queue.start();
+    await waitFor(() => expect(queue.getSnapshot().items[0].status).toBe("failed"));
+    const message = queue.getSnapshot().items[0].error ?? "";
+    expect(message).toMatch(/300 pages/i);
+    expect(message).not.toMatch(/retry/i);
+  });
+});

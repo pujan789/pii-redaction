@@ -60,3 +60,26 @@ export function redactedFilename(position = 1, total = 1): string {
   const width = Math.max(2, String(total).length);
   return `redacted-${String(position).padStart(width, "0")}-of-${String(total).padStart(width, "0")}.pdf`;
 }
+
+/** "client/2025/W-2 Smith.pdf" becomes "W-2 Smith-redacted.pdf". */
+export function originalRedactedFilename(label: string): string {
+  const base = label.split(/[\\/]/).pop() ?? label;
+  const stem = base.replace(/\.[^.]+$/, "");
+  const safe = stem
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^[-. ]+|[-. ]+$/g, "")
+    .slice(0, 120);
+  return `${safe || "document"}-redacted.pdf`;
+}
+
+/** Original-name downloads for a whole batch, made unique in order. */
+export function uniqueRedactedFilenames(labels: string[]): string[] {
+  const seen = new Map<string, number>();
+  return labels.map((label) => {
+    const name = originalRedactedFilename(label);
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    return count === 1 ? name : name.replace(/\.pdf$/, `-${count}.pdf`);
+  });
+}

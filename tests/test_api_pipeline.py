@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fastapi import Request
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
@@ -17,7 +18,8 @@ class FixedDetector:
     def preflight(self) -> None:
         return None
 
-    def detect_document(self, pages: object) -> list[Detection]:
+    def detect_document(self, pages: object, progress: object = None) -> list[Detection]:
+        del progress
         return [
             Detection(
                 id=f"visual-name-{page.page_index}",
@@ -176,3 +178,59 @@ def test_failed_blob_deletion_can_be_retried_and_cleaned_up(
         assert expired.status == JobStatus.EXPIRED
     finally:
         api_main.container = previous
+
+
+def _request(headers: dict[str, str], client: str, event: dict | None = None) -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+        "client": (client, 12345),
+    }
+    if event is not None:
+        scope["aws.event"] = event
+    return Request(scope)
+
+
+def test_source_ip_uses_the_reverse_proxy_header_in_local_runtime() -> None:
+    request = _request({"X-Real-IP": "203.0.113.9"}, client="172.18.0.3")
+    assert api_main._source_ip(request) == "203.0.113.9"
+
+
+def test_source_ip_falls_back_to_the_socket_peer_without_a_proxy() -> None:
+    assert api_main._source_ip(_request({}, client="127.0.0.1")) == "127.0.0.1"
+
+
+def _aws_event(source_ip: str) -> dict:
+    return {"requestContext": {"http": {"sourceIp": source_ip}}}
+
+
+def test_source_ip_behind_cloudfront_uses_the_viewer_address() -> None:
+    request = _request(
+        {"X-Forwarded-For": "198.51.100.7, 203.0.113.9, 70.132.1.1"},
+        client="10.0.0.1",
+        event=_aws_event("70.132.1.1"),
+    )
+    assert api_main._source_ip(request) == "203.0.113.9"
+
+
+def test_source_ip_behind_cloudfront_prefers_the_cloudfront_viewer_header() -> None:
+    request = _request(
+        {
+            "CloudFront-Viewer-Address": "203.0.113.9:51234",
+            "X-Forwarded-For": "1.1.1.1, 70.132.1.1",
+        },
+        client="10.0.0.1",
+        event=_aws_event("70.132.1.1"),
+    )
+    assert api_main._source_ip(request) == "203.0.113.9"
+
+
+def test_source_ip_on_aws_without_a_proxy_chain_uses_the_gateway_source() -> None:
+    request = _request(
+        {"X-Forwarded-For": "203.0.113.9"},
+        client="10.0.0.1",
+        event=_aws_event("203.0.113.9"),
+    )
+    assert api_main._source_ip(request) == "203.0.113.9"

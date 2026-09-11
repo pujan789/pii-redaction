@@ -35,6 +35,12 @@ class DocumentError(RuntimeError):
 MAX_PAGE_RENDER_PIXELS = 24_000_000
 MAX_DOCUMENT_RENDER_PIXELS = 1_300_000_000
 
+# Annotation subtypes that never add text of their own to the rendered page.
+# Every other subtype (FreeText, Widget form fields, Stamp, ...) can paint
+# text that is absent from the content stream, so such pages are OCR'd from
+# the rendered image instead of trusting the text layer.
+_TEXTLESS_ANNOTATIONS = {"Link", "Popup", "Highlight", "Underline", "StrikeOut", "Squiggly"}
+
 # PDFium is not thread-safe and pypdfium2 adds no synchronization; concurrent
 # renders from separate documents segfault inside libpdfium. Every pdfium call
 # in the codebase must hold this lock.
@@ -62,6 +68,9 @@ class PageArtifact:
     page_index: int
     image: Image.Image
     words: list[WordBox]
+    # True when the text layer cannot be trusted to contain everything that is
+    # painted on the page (annotations or form fields carry their own text).
+    needs_ocr: bool = False
 
 
 def _normalized_box(
@@ -79,24 +88,44 @@ def _normalized_box(
     return BoundingBox(x1=left, y1=top, x2=right, y2=bottom)
 
 
-def _pdf_words(path: Path, page_count: int) -> list[list[WordBox]]:
-    result: list[list[WordBox]] = [[] for _ in range(page_count)]
+def _page_paints_annotation_text(page: pdfplumber.page.Page) -> bool:
+    try:
+        annotations = page.annots
+    except Exception:
+        # Unparseable annotations: assume the worst and OCR the render.
+        return True
+    for annotation in annotations:
+        data = annotation.get("data", {}) if isinstance(annotation, dict) else {}
+        subtype = data.get("Subtype") if isinstance(data, dict) else None
+        name = getattr(subtype, "name", str(subtype) if subtype is not None else "")
+        if name not in _TEXTLESS_ANNOTATIONS:
+            return True
+    return False
+
+
+def _pdf_words(path: Path, page_count: int) -> list[list[WordBox] | None]:
+    """Per-page text-layer words; None marks a page whose text layer is unusable."""
+    result: list[list[WordBox] | None] = [[] for _ in range(page_count)]
     try:
         with pdfplumber.open(path) as document:
             if len(document.pages) != page_count:
                 return result
             for index, page in enumerate(document.pages):
+                if _page_paints_annotation_text(page):
+                    result[index] = None
+                    continue
                 words = page.extract_words(
                     x_tolerance=2,
                     y_tolerance=2,
                     keep_blank_chars=False,
                     use_text_flow=True,
                 )
+                page_words: list[WordBox] = []
                 for word in words:
                     text = str(word.get("text", "")).strip()
                     if not text:
                         continue
-                    result[index].append(
+                    page_words.append(
                         WordBox(
                             text=text,
                             box=_normalized_box(
@@ -110,9 +139,10 @@ def _pdf_words(path: Path, page_count: int) -> list[list[WordBox]]:
                             source="pdf",
                         )
                     )
+                result[index] = page_words
     except Exception:
         # Text extraction is an optional signal. Rendering remains authoritative.
-        return result
+        return [[] for _ in range(page_count)]
     return result
 
 
@@ -149,12 +179,25 @@ def ocr_words(image: Image.Image) -> list[WordBox]:
     return words
 
 
+def _open_pdf(path: Path) -> pdfium.PdfDocument:
+    try:
+        document = pdfium.PdfDocument(path)
+    except Exception as exc:
+        code = (
+            "pdf_password_protected"
+            if pdfium.raw.FPDF_GetLastError() == pdfium.raw.FPDF_ERR_PASSWORD
+            else "pdf_unreadable"
+        )
+        raise DocumentError(code) from exc
+    # Form fields only render through a form environment; without it a filled
+    # W-9 or organizer comes back with every field blank.
+    document.init_forms()
+    return document
+
+
 def _render_pdf(path: Path, dpi: int, max_pages: int) -> list[PageArtifact]:
     with PDFIUM_LOCK:
-        try:
-            document = pdfium.PdfDocument(path)
-        except Exception as exc:
-            raise DocumentError("pdf_unreadable") from exc
+        document = _open_pdf(path)
         page_count = len(document)
     if page_count < 1:
         raise DocumentError("document_empty")
@@ -172,7 +215,10 @@ def _render_pdf(path: Path, dpi: int, max_pages: int) -> list[PageArtifact]:
                 projected_pixels = int(width_points * scale) * int(height_points * scale)
                 total_pixels = _add_pixel_budget(projected_pixels, total_pixels)
                 image = page.render(scale=scale, rotation=0).to_pil().convert("RGB")
-            pages.append(PageArtifact(index, image, extracted_words[index]))
+            words = extracted_words[index]
+            pages.append(
+                PageArtifact(index, image, words if words is not None else [], words is None)
+            )
     except DocumentError:
         raise
     except Exception as exc:
@@ -212,16 +258,21 @@ def load_document(
     pages = (
         _render_pdf(path, dpi, max_pages) if extension == ".pdf" else _render_image(path, max_pages)
     )
-    if ocr:
-        targets = [page for page in pages if text_layer_is_garbage(page.words)]
-        if targets:
-            # Tesseract runs as a subprocess pinned to one OMP thread, so
-            # pages OCR in parallel across cores instead of one at a time.
-            workers = min(len(targets), max(1, os.cpu_count() or 1))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                extracted = list(pool.map(lambda page: ocr_words(page.image), targets))
-            for page, words in zip(targets, extracted, strict=True):
-                page.words = words
+    if not ocr:
+        if any(page.needs_ocr for page in pages):
+            # Annotation or form-field text is painted on the page but absent
+            # from the text layer; without OCR it would ship unredacted.
+            raise DocumentError("ocr_unavailable")
+        return pages
+    targets = [page for page in pages if page.needs_ocr or text_layer_is_garbage(page.words)]
+    if targets:
+        # Tesseract runs as a subprocess pinned to one OMP thread, so
+        # pages OCR in parallel across cores instead of one at a time.
+        workers = min(len(targets), max(1, os.cpu_count() or 1))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            extracted = list(pool.map(lambda page: ocr_words(page.image), targets))
+        for page, words in zip(targets, extracted, strict=True):
+            page.words = words
     return pages
 
 

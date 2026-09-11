@@ -219,6 +219,16 @@ resource "aws_ecs_task_definition" "worker" {
       containerPath = "/models"
       readOnly      = false
     }]
+    healthCheck = {
+      # The worker exits when vLLM dies; this catches a vLLM that is up but
+      # not answering so ECS replaces the task. startPeriod covers the model
+      # download and load on a cold instance.
+      command     = ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 900
+    }
     linuxParameters = {
       initProcessEnabled = true
       tmpfs = [{

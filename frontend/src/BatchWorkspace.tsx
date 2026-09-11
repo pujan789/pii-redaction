@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { BATCH_SESSION_KEY, BatchQueue, type BatchItem } from "./batch";
 import { createBatchZip } from "./batchDownload";
 import { saveBlobAndDelete } from "./download";
+import { uniqueRedactedFilenames } from "./fileSelection";
+import PdfPreview from "./PdfPreview";
 
 const STATUS_LABELS = {
   waiting: "Waiting",
@@ -12,55 +14,25 @@ const STATUS_LABELS = {
   ready: "Ready",
   failed: "Needs attention",
 };
-type Filter = "all" | "ready" | "failed";
+type Filter = "all" | "ready" | "no_redactions" | "failed";
 
-function PdfPreview({
-  item,
-  onClose,
-}: {
-  item: BatchItem;
-  onClose: () => void;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    const objectUrl = URL.createObjectURL(item.result!);
-    setUrl(objectUrl);
-    dialog.current?.showModal();
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [item.result]);
-  return (
-    <dialog
-      ref={dialog}
-      className="batch-preview"
-      aria-labelledby="preview-title"
-      onCancel={onClose}
-    >
-      <div className="batch-preview-heading">
-        <div>
-          <p className="eyebrow">Redacted PDF</p>
-          <h2 id="preview-title">{item.label}</h2>
-        </div>
-        <button
-          type="button"
-          className="button button-secondary"
-          onClick={onClose}
-          autoFocus
-        >
-          Close preview
-        </button>
-      </div>
-      {url && <iframe src={url} title={`Redacted preview of ${item.label}`} />}
-    </dialog>
-  );
+function hasNoRedactions(item: BatchItem): boolean {
+  return item.status === "ready" && item.job?.finding_count === 0;
+}
+
+function csvCell(value: string | number): string {
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 export default function BatchWorkspace({
   queue,
   onClose,
+  onReview,
 }: {
   queue: BatchQueue;
   onClose: () => void;
+  onReview?: (item: BatchItem) => void;
 }) {
   const { items, paused, pauseReason } = useSyncExternalStore(
     queue.subscribe,
@@ -71,11 +43,13 @@ export default function BatchWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState<Set<number>>(new Set());
   const [preview, setPreview] = useState<BatchItem | null>(null);
+  const [originalNames, setOriginalNames] = useState(false);
   const actionInFlight = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
   const ready = items.filter((item) => item.status === "ready");
   const failed = items.filter((item) => item.status === "failed");
   const waiting = items.filter((item) => item.status === "waiting");
+  const noRedactions = items.filter(hasNoRedactions);
   const activeCount =
     items.length - ready.length - failed.length - waiting.length;
   const settled = !activeCount && !waiting.length;
@@ -89,6 +63,14 @@ export default function BatchWorkspace({
     waiting.length > 0 ||
     activeCount > 0 ||
     items.some((item) => item.credentials);
+  const outputNames = useMemo(
+    () =>
+      originalNames
+        ? uniqueRedactedFilenames(items.map((item) => item.label))
+        : items.map((item) => item.filename),
+    [items, originalNames],
+  );
+  const outputName = (item: BatchItem) => outputNames[item.position - 1] ?? item.filename;
 
   useEffect(() => {
     queue.start();
@@ -104,6 +86,24 @@ export default function BatchWorkspace({
     return () => window.removeEventListener("beforeunload", preventLoss);
   }, [hasLocalWork]);
 
+  function indexFor(selected: BatchItem[]): { filename: string; content: string } {
+    const rows = selected.map((item) =>
+      [
+        item.position,
+        item.label,
+        outputName(item),
+        item.job?.page_count ?? "",
+        item.job?.finding_count ?? "",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+    return {
+      filename: "index.csv",
+      content: ["position,original,output,pages,redactions", ...rows].join("\n") + "\n",
+    };
+  }
+
   async function download(selected: BatchItem[]) {
     if (actionInFlight.current) return;
     actionInFlight.current = true;
@@ -115,14 +115,15 @@ export default function BatchWorkspace({
           ? selected[0].result!
           : await createBatchZip(
               selected.map((item) => ({
-                filename: item.filename,
+                filename: outputName(item),
                 result: item.result!,
               })),
+              indexFor(selected),
             );
       await saveBlobAndDelete(
         result,
         async () => {},
-        selected.length === 1 ? selected[0].filename : "redacted-documents.zip",
+        selected.length === 1 ? outputName(selected[0]) : "redacted-documents.zip",
       );
       setDownloaded(
         (previous) =>
@@ -167,6 +168,14 @@ export default function BatchWorkspace({
     }
   }
 
+  const visible = items.filter((item) =>
+    filter === "all"
+      ? true
+      : filter === "no_redactions"
+        ? hasNoRedactions(item)
+        : item.status === filter,
+  );
+
   return (
     <section className="batch-workspace" aria-labelledby="batch-title">
       <div className="batch-heading">
@@ -184,7 +193,7 @@ export default function BatchWorkspace({
           <p>
             {settled
               ? `${ready.length} of ${items.length} documents ready to download.`
-              : "We’ll work through the entire batch. There’s no need to open each file."}
+              : "We’ll work through the whole batch. Spot-check the results before sharing them."}
           </p>
         </div>
         <div className="batch-heading-actions">
@@ -288,6 +297,7 @@ export default function BatchWorkspace({
               [
                 ["all", "All documents", items.length],
                 ["ready", "Ready", ready.length],
+                ["no_redactions", "No redactions", noRedactions.length],
                 ["failed", "Needs attention", failed.length],
               ] as const
             ).map(([value, label, count]) => (
@@ -326,92 +336,105 @@ export default function BatchWorkspace({
               </tr>
             </thead>
             <tbody>
-              {items
-                .filter((item) => filter === "all" || item.status === filter)
-                .map((item) => (
-                  <tr key={item.position}>
-                    <th scope="row">
-                      <div className="batch-file">
-                        <span className="batch-file-number">
-                          {String(item.position).padStart(2, "0")}
-                        </span>
-                        <div>
-                          <strong>{item.label}</strong>
-                          <small>{item.filename}</small>
-                        </div>
-                      </div>
-                    </th>
-                    <td>{item.job?.page_count ?? "—"}</td>
-                    <td>
-                      {item.job &&
-                      (item.status === "ready" || item.status === "receiving")
-                        ? item.job.finding_count
-                        : "—"}
-                    </td>
-                    <td>
-                      <span className={`batch-status-pill is-${item.status}`}>
-                        {STATUS_LABELS[item.status]}
+              {visible.map((item) => (
+                <tr key={item.position}>
+                  <th scope="row">
+                    <div className="batch-file">
+                      <span className="batch-file-number">
+                        {String(item.position).padStart(2, "0")}
                       </span>
-                      {item.status === "processing" &&
-                        Boolean(item.job?.page_count) && (
-                          <small className="batch-row-detail">
-                            {item.job!.pages_completed} / {item.job!.page_count}{" "}
-                            pages
-                          </small>
-                        )}
-                      {item.error && (
-                        <small className="batch-row-error">{item.error}</small>
-                      )}
-                      {item.cleanupError && (
-                        <small className="batch-row-error">
-                          Server cleanup pending
+                      <div>
+                        <strong>{item.label}</strong>
+                        <small>{outputName(item)}</small>
+                      </div>
+                    </div>
+                  </th>
+                  <td>{item.job?.page_count ?? "—"}</td>
+                  <td>
+                    {hasNoRedactions(item) ? (
+                      <span className="batch-status-pill is-warning">No redactions</span>
+                    ) : item.job &&
+                      (item.status === "ready" || item.status === "receiving") ? (
+                      item.job.finding_count
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    <span className={`batch-status-pill is-${item.status}`}>
+                      {STATUS_LABELS[item.status]}
+                    </span>
+                    {item.status === "processing" &&
+                      Boolean(item.job?.page_count) && (
+                        <small className="batch-row-detail">
+                          {item.job!.pages_completed} / {item.job!.page_count}{" "}
+                          pages
                         </small>
                       )}
-                    </td>
-                    <td>
-                      <div className="batch-row-actions">
-                        {item.status === "ready" && (
-                          <>
-                            <button
-                              type="button"
-                              className="batch-text-button"
-                              onClick={() => setPreview(item)}
-                              aria-label={`Preview ${item.label}`}
-                            >
-                              Preview
-                            </button>
-                            <button
-                              type="button"
-                              className="batch-text-button"
-                              disabled={Boolean(busy)}
-                              onClick={() => void download([item])}
-                              aria-label={`Download ${item.label}`}
-                            >
-                              Download
-                            </button>
-                          </>
+                    {item.error && (
+                      <small className="batch-row-error">{item.error}</small>
+                    )}
+                    {item.cleanupError && (
+                      <small className="batch-row-error">
+                        Server cleanup pending
+                      </small>
+                    )}
+                  </td>
+                  <td>
+                    <div className="batch-row-actions">
+                      {item.status === "ready" && (
+                        <>
+                          <button
+                            type="button"
+                            className="batch-text-button"
+                            onClick={() => setPreview(item)}
+                            aria-label={`Preview ${item.label}`}
+                          >
+                            Preview
+                          </button>
+                          <button
+                            type="button"
+                            className="batch-text-button"
+                            disabled={Boolean(busy)}
+                            onClick={() => void download([item])}
+                            aria-label={`Download ${item.label}`}
+                          >
+                            Download
+                          </button>
+                        </>
+                      )}
+                      {item.status === "failed" &&
+                        (item.file || item.credentials) && (
+                          <button
+                            type="button"
+                            className="batch-text-button"
+                            disabled={Boolean(busy)}
+                            onClick={() => queue.retry(item.position)}
+                            aria-label={`Retry ${item.label}`}
+                          >
+                            Retry
+                          </button>
                         )}
-                        {item.status === "failed" &&
-                          (item.file || item.credentials) && (
-                            <button
-                              type="button"
-                              className="batch-text-button"
-                              disabled={Boolean(busy)}
-                              onClick={() => queue.retry(item.position)}
-                              aria-label={`Retry ${item.label}`}
-                            >
-                              Retry
-                            </button>
-                          )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      {onReview &&
+                        item.file &&
+                        (item.status === "ready" || item.status === "failed") && (
+                          <button
+                            type="button"
+                            className="batch-text-button"
+                            disabled={Boolean(busy)}
+                            onClick={() => onReview(item)}
+                            aria-label={`Review ${item.label} manually`}
+                          >
+                            Review manually
+                          </button>
+                        )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-          {!items.some(
-            (item) => filter === "all" || item.status === filter,
-          ) && <p className="batch-empty">No documents in this view yet.</p>}
+          {!visible.length && <p className="batch-empty">No documents in this view yet.</p>}
         </div>
       </div>
 
@@ -426,10 +449,20 @@ export default function BatchWorkspace({
             {ready.length > 0 &&
             ready.every((item) => downloaded.has(item.position))
               ? "Download started. You can download again while this tab stays open."
-              : failed.length
-                ? "Downloads include completed PDFs only. Failed files stay available to retry."
-                : "Each document stays a separate PDF in your download."}
+              : noRedactions.length
+                ? `${noRedactions.length} ${noRedactions.length === 1 ? "document has" : "documents have"} no redactions. Check ${noRedactions.length === 1 ? "it" : "them"} before sharing.`
+                : failed.length
+                  ? "Downloads include completed PDFs only. Failed files stay available to retry."
+                  : "Each document stays a separate PDF in your download, with an index.csv mapping it to the original."}
           </span>
+          <label className="batch-download-option">
+            <input
+              type="checkbox"
+              checked={originalNames}
+              onChange={(event) => setOriginalNames(event.target.checked)}
+            />
+            Name PDFs after the originals (those names then appear in your download history)
+          </label>
         </div>
         <button
           type="button"
@@ -456,11 +489,12 @@ export default function BatchWorkspace({
         </p>
         <p>
           Automatic redaction can miss sensitive information. Preview or check
-          the downloaded PDFs before sharing.
+          the downloaded PDFs before sharing, and use Review manually on any
+          document you want to adjust.
         </p>
       </div>
-      {preview && (
-        <PdfPreview item={preview} onClose={() => setPreview(null)} />
+      {preview && preview.result && (
+        <PdfPreview title={preview.label} blob={preview.result} onClose={() => setPreview(null)} />
       )}
     </section>
   );

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
+import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from taxhance_pii.config import Settings
 from taxhance_pii.domain import BoundingBox, Detection, PiiCategory
@@ -32,16 +35,27 @@ PROPAGATED_CATEGORIES = {
     PiiCategory.SSN,
     PiiCategory.STREET_ADDRESS,
 }
+# A named taxpayer identifier that cannot be located on the page must never
+# ship silently; every other category degrades to a logged warning.
+_TIN_CATEGORIES = {PiiCategory.SSN, PiiCategory.ITIN}
+
+ProgressCallback = Callable[[], None]
 
 
 class DocumentDetector(Protocol):
     def preflight(self) -> None: ...
 
-    def detect_document(self, pages: list[PageArtifact]) -> list[Detection]: ...
+    def detect_document(
+        self, pages: list[PageArtifact], progress: ProgressCallback | None = None
+    ) -> list[Detection]: ...
 
 
 class DetectorError(RuntimeError):
-    pass
+    """The model produced output this document cannot be trusted with."""
+
+
+class DetectorUnavailable(DetectorError):
+    """The model server cannot be reached; the document is not at fault."""
 
 
 @dataclass
@@ -49,17 +63,39 @@ class _PageResult:
     page: PageArtifact
     items: list[tuple[str, PiiCategory]] = field(default_factory=list)
     detections: list[Detection] = field(default_factory=list)
+    unanchored: list[tuple[str, PiiCategory]] = field(default_factory=list)
 
 
 class TextAnchoredDetector:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    def _request(self, path: str, payload: dict[str, Any] | None, timeout: int) -> Any:
+        request = urllib.request.Request(  # noqa: S310
+            f"{self.settings.vllm_base_url}{path}",
+            data=None if payload is None else json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="GET" if payload is None else "POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                if response.status != 200:
+                    raise DetectorUnavailable("vllm_unhealthy")
+                return json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            # A rejected request (context too long, bad schema) is a problem
+            # with this document, not with the server.
+            raise DetectorError(f"vllm_http_{exc.code}") from exc
+        except (
+            urllib.error.URLError,
+            http.client.HTTPException,
+            ConnectionError,
+            TimeoutError,
+        ) as exc:
+            raise DetectorUnavailable("vllm_unreachable") from exc
+
     def preflight(self) -> None:
-        request = urllib.request.Request(f"{self.settings.vllm_base_url}/models")  # noqa: S310
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-            if response.status != 200:
-                raise DetectorError("vllm_unhealthy")
+        self._request("/models", None, timeout=10)
 
     def _complete(self, grid: str) -> list[tuple[str, PiiCategory]]:
         payload = {
@@ -69,23 +105,18 @@ class TextAnchoredDetector:
             "max_tokens": self.settings.model_max_new_tokens,
             "response_format": RESPONSE_JSON_SCHEMA,
         }
-        request = urllib.request.Request(  # noqa: S310
-            f"{self.settings.vllm_base_url}/chat/completions",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=300) as response:  # noqa: S310
-            body = json.loads(response.read())
-        content = body["choices"][0]["message"]["content"]
+        body = self._request("/chat/completions", payload, timeout=300)
+        choice = body["choices"][0]
+        if choice.get("finish_reason") == "length":
+            # A cut-off JSON array would silently lose every later finding.
+            raise DetectorError("model_output_truncated")
+        content = choice["message"]["content"]
         try:
-            parsed = json.loads(content)
-            raw_items = parsed.get("items", [])
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            logger.warning("model_output_unparseable")
-            return []
+            raw_items = json.loads(content)["items"]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise DetectorError("model_output_invalid") from exc
         if not isinstance(raw_items, list):
-            return []
+            raise DetectorError("model_output_invalid")
         items: list[tuple[str, PiiCategory]] = []
         for raw in raw_items:
             if not isinstance(raw, dict):
@@ -98,10 +129,13 @@ class TextAnchoredDetector:
 
     def _anchor_items(self, result: _PageResult) -> int:
         anchored_count = 0
+        result.unanchored = []
         for text, category in result.items:
             boxes = anchor_value(text, result.page.words)
             if boxes:
                 anchored_count += 1
+            else:
+                result.unanchored.append((text, category))
             result.detections.extend(
                 self._detection(result.page.page_index, category, box, 0.9) for box in boxes
             )
@@ -137,9 +171,17 @@ class TextAnchoredDetector:
             source="model",
         )
 
-    def detect_document(self, pages: list[PageArtifact]) -> list[Detection]:
+    def detect_document(
+        self, pages: list[PageArtifact], progress: ProgressCallback | None = None
+    ) -> list[Detection]:
+        def detect(page: PageArtifact) -> _PageResult:
+            result = self._detect_page(page)
+            if progress is not None:
+                progress()
+            return result
+
         with ThreadPoolExecutor(max_workers=self.settings.detector_concurrency) as pool:
-            results = list(pool.map(self._detect_page, pages))
+            results = list(pool.map(detect, pages))
         doc_values = {
             (text, category)
             for result in results
@@ -156,8 +198,22 @@ class TextAnchoredDetector:
                     for box in anchor_value(text, page.words)
                 )
             page_detections.extend(ssn_safety_net(page.page_index, page.words))
+            self._check_unanchored(result, page_detections)
             detections.extend(merge_page_detections(page_detections))
         return detections
+
+    @staticmethod
+    def _check_unanchored(result: _PageResult, page_detections: list[Detection]) -> None:
+        if not result.unanchored:
+            return
+        logger.warning(
+            "detections_unanchored",
+            extra={"page_index": result.page.page_index, "count": len(result.unanchored)},
+        )
+        tin_named = any(category in _TIN_CATEGORIES for _, category in result.unanchored)
+        tin_covered = any(d.category in _TIN_CATEGORIES for d in page_detections)
+        if tin_named and not tin_covered:
+            raise DetectorError("detection_unanchored")
 
 
 class NoopDetector:
@@ -166,6 +222,8 @@ class NoopDetector:
     def preflight(self) -> None:
         return None
 
-    def detect_document(self, pages: list[PageArtifact]) -> list[Detection]:
-        del pages
+    def detect_document(
+        self, pages: list[PageArtifact], progress: ProgressCallback | None = None
+    ) -> list[Detection]:
+        del pages, progress
         return []

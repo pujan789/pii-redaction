@@ -130,3 +130,23 @@ def test_dynamo_count_and_expiry_scans_paginate() -> None:
     found = _dynamo_with_table(expiry_table).list_expired(utc_now(), limit=1)
     assert [job.job_id for job in found] == ["expired"]
     assert expiry_table.requests[1]["ExclusiveStartKey"] == {"job_id": "filtered"}
+
+
+def test_sqlite_requeue_in_flight_returns_interrupted_jobs_to_the_queue(tmp_path: Path) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    repository.create(_job("detecting").model_copy(update={"status": JobStatus.DETECTING}))
+    repository.create(_job("redacting").model_copy(update={"status": JobStatus.REDACTING}))
+    repository.create(_job("done").model_copy(update={"status": JobStatus.COMPLETE}))
+
+    assert repository.requeue_in_flight() == 2
+
+    statuses = {}
+    for job_id in ("detecting", "redacting", "done"):
+        job = repository.get(job_id)
+        assert job is not None
+        statuses[job_id] = job.status
+    assert statuses == {
+        "detecting": JobStatus.QUEUED_DETECTION,
+        "redacting": JobStatus.QUEUED_REDACTION,
+        "done": JobStatus.COMPLETE,
+    }

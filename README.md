@@ -95,7 +95,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. The first worker start downloads the pinned
+Open `http://localhost:8080`. If staff will use the app from other computers, set
+`PII_PUBLIC_BASE_URL` and `PII_ALLOWED_ORIGINS` in `.env` to the address they will open
+(for example `http://redaction.office.local:8080`); uploads are sent to that address.
+Every `PII_*` value in `.env` reaches the containers, so the limits and vLLM settings
+documented in `.env.example` can be tuned there. The first worker start downloads the pinned
 `google/gemma-4-E2B-it` revision from Hugging Face (Apache-2.0). Model weights
 are not bundled with this repository; the default revision is pinned to commit
 `3e22461f65e89153144f8adb70e3b8c2cc9845a7` for reproducibility.
