@@ -221,13 +221,14 @@ resource "aws_ecs_task_definition" "worker" {
     }]
     healthCheck = {
       # The worker exits when vLLM dies; this catches a vLLM that is up but
-      # not answering so ECS replaces the task. startPeriod covers the model
-      # download and load on a cold instance.
+      # not answering so ECS replaces the task. ECS caps startPeriod at 300
+      # seconds, so the cold model load is covered by the retry budget
+      # instead: 300 + 120 * 10 seconds before a task is declared unhealthy.
       command     = ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
-      interval    = 30
-      timeout     = 5
-      retries     = 3
-      startPeriod = 900
+      interval    = 120
+      timeout     = 10
+      retries     = 10
+      startPeriod = 300
     }
     linuxParameters = {
       initProcessEnabled = true
