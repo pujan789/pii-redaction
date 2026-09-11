@@ -2,8 +2,11 @@ ARG WORKER_BASE
 FROM public.ecr.aws/docker/library/python@sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49 AS overlay-dependencies
 
 COPY requirements/worker-overlay.txt /tmp/requirements-worker-overlay.txt
-RUN pip install --no-cache-dir --no-deps --require-hashes \
-    --target /overlay -r /tmp/requirements-worker-overlay.txt
+# pip only creates the target directory when it installs something; an empty
+# additive-wheels file must still leave a directory for the COPY below.
+RUN mkdir -p /overlay \
+    && pip install --no-cache-dir --no-deps --require-hashes \
+        --target /overlay -r /tmp/requirements-worker-overlay.txt
 
 FROM ${WORKER_BASE}
 
