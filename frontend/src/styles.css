@@ -1209,25 +1209,36 @@ footer a:hover {
   font-weight: 650;
 }
 
-.review-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.review-toolbar .icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  padding: 0;
+}
+
+.review-toolbar .icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.review-toolbar .icon-button.is-active {
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+}
+
+.zoom-level {
+  min-width: 44px;
   color: #334155;
-  cursor: pointer;
-}
-
-.review-toggle input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--primary);
-}
-
-.review-hint {
-  flex-basis: 100%;
-  color: var(--muted);
   font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .review-pages {

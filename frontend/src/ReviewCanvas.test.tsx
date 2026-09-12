@@ -104,6 +104,12 @@ describe("review canvas", () => {
     expect(screen.getByRole("toolbar", { name: /review controls/i })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /boxes on this page/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/new box type/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/drag to add a box/i)).not.toBeInTheDocument();
+    for (const name of [/zoom out/i, /zoom in/i, /rotate/i, /final look/i, /remove selected box/i, /^undo/i, /restore suggestions/i]) {
+      const control = screen.getByRole("button", { name });
+      expect(control).toHaveAttribute("title");
+      expect(control.querySelector("svg")).not.toBeNull();
+    }
     expect(await screen.findAllByRole("button", { name: /redaction$/i })).toHaveLength(3);
   });
 
@@ -127,8 +133,13 @@ describe("review canvas", () => {
     renderCanvas();
     await waitFor(() => expect(apiMocks.getPageBlob).toHaveBeenCalledTimes(3));
     expect(apiMocks.getPageBlob.mock.calls.map((call) => call[1]).sort()).toEqual([0, 1, 2]);
-    fireEvent.change(screen.getByLabelText(/zoom/i), { target: { value: "150" } });
+    fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
     await waitFor(() => expect(screen.getAllByTestId("review-page")[0]).toHaveStyle({ width: "150%" }));
+    expect(screen.getByText("150%")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
+    expect(screen.getAllByTestId("review-page")[0]).toHaveStyle({ width: "75%" });
+    expect(screen.getByRole("button", { name: /zoom out/i })).toBeDisabled();
     expect(apiMocks.getPageBlob).toHaveBeenCalledTimes(3);
   });
 
@@ -161,7 +172,10 @@ describe("review canvas", () => {
   it("previews the final look and turns the pages", async () => {
     const { onRotate, rerender } = renderCanvas();
     const stages = await screen.findAllByTestId("document-stage");
-    fireEvent.click(screen.getByLabelText(/final look/i));
+    const finalLook = screen.getByRole("button", { name: /final look/i });
+    expect(finalLook).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(finalLook);
+    expect(finalLook).toHaveAttribute("aria-pressed", "true");
     stages.forEach((stage) => expect(stage).toHaveClass("is-final"));
 
     fireEvent.click(screen.getByRole("button", { name: /rotate/i }));

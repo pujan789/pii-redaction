@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPageBlob } from "./api";
+import {
+  EyeIcon,
+  RestoreIcon,
+  RotateIcon,
+  TrashIcon,
+  UndoIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from "./icons";
 import { nextRotation, orderedBox, type Point, unrotatePoint } from "./reviewGeometry";
 import { CATEGORY_LABELS, pageBoxCounts, sameDetections } from "./reviewSummary";
 import type { Detection, JobCredentials, Manifest, Rotation } from "./types";
@@ -211,6 +220,9 @@ export default function ReviewCanvas({
   }
 
   const draftBox = draft ? orderedBox(draft.start, draft.cursor) : null;
+  const zoomIndex = ZOOM_LEVELS.indexOf(zoom);
+  const zoomBy = (delta: number) =>
+    setZoom(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, zoomIndex + delta))]);
 
   return (
     <div className="review-workspace">
@@ -248,49 +260,82 @@ export default function ReviewCanvas({
           </button>
         </div>
         <div className="review-toolbar-group">
-          <label htmlFor="zoom-select">Zoom</label>
-          <select
-            id="zoom-select"
-            value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => zoomBy(-1)}
+            disabled={zoomIndex <= 0}
           >
-            {ZOOM_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level}%
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={() => onRotate(nextRotation(rotation))}>
-            Rotate 90°
+            <ZoomOutIcon />
           </button>
-          <label className="review-toggle">
-            <input
-              type="checkbox"
-              checked={finalLook}
-              onChange={(event) => setFinalLook(event.target.checked)}
-            />
-            Preview final look
-          </label>
-        </div>
-        <div className="review-toolbar-group review-toolbar-actions">
-          <button type="button" onClick={removeSelected} disabled={!selectedId}>
-            Remove selected box
-          </button>
-          <button type="button" onClick={onUndo} disabled={!canUndo}>
-            Undo
+          <span className="zoom-level">{zoom}%</span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => zoomBy(1)}
+            disabled={zoomIndex >= ZOOM_LEVELS.length - 1}
+          >
+            <ZoomInIcon />
           </button>
           <button
             type="button"
+            className="icon-button"
+            aria-label="Rotate 90 degrees"
+            title="Rotate the document 90°"
+            onClick={() => onRotate(nextRotation(rotation))}
+          >
+            <RotateIcon />
+          </button>
+          <button
+            type="button"
+            className={`icon-button ${finalLook ? "is-active" : ""}`}
+            aria-label="Preview final look"
+            aria-pressed={finalLook}
+            title="Preview final look"
+            onClick={() => setFinalLook((value) => !value)}
+          >
+            <EyeIcon />
+          </button>
+        </div>
+        <div className="review-toolbar-group review-toolbar-actions">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Remove selected box"
+            title="Remove selected box (Delete)"
+            onClick={removeSelected}
+            disabled={!selectedId}
+          >
+            <TrashIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Undo"
+            title="Undo"
+            onClick={onUndo}
+            disabled={!canUndo}
+          >
+            <UndoIcon />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Restore suggestions"
+            title="Restore the detector's suggestions"
             onClick={() => {
               onChange(manifest.detections);
               setSelectedId(null);
             }}
             disabled={suggestionsIntact}
           >
-            Restore suggestions
+            <RestoreIcon />
           </button>
         </div>
-        <span className="review-hint">Drag to add a box. Delete removes the selected box.</span>
       </div>
 
       <div className="review-pages" ref={scroller}>
