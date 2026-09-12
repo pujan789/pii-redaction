@@ -136,9 +136,11 @@ describe("review canvas", () => {
     fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
     await waitFor(() => expect(screen.getAllByTestId("review-page")[0]).toHaveStyle({ width: "150%" }));
     expect(screen.getByText("150%")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
-    fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
-    expect(screen.getAllByTestId("review-page")[0]).toHaveStyle({ width: "75%" });
+    for (let step = 0; step < 5; step++) {
+      fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
+    }
+    expect(screen.getAllByTestId("review-page")[0]).toHaveStyle({ width: "33%" });
+    expect(screen.getByText("33%")).toBeVisible();
     expect(screen.getByRole("button", { name: /zoom out/i })).toBeDisabled();
     expect(apiMocks.getPageBlob).toHaveBeenCalledTimes(3);
   });

@@ -14,7 +14,7 @@ import { nextRotation, orderedBox, type Point, unrotatePoint } from "./reviewGeo
 import { CATEGORY_LABELS, pageBoxCounts, sameDetections } from "./reviewSummary";
 import type { Detection, JobCredentials, Manifest, Rotation } from "./types";
 
-const ZOOM_LEVELS = [75, 100, 150, 200, 300];
+const ZOOM_LEVELS = [33, 50, 67, 75, 100, 150, 200, 300];
 const LETTER_ASPECT = 8.5 / 11;
 
 interface ReviewCanvasProps {
