@@ -12,7 +12,15 @@ export class ApiError extends Error {
 }
 
 async function checked(response: Response): Promise<Response> {
-  if (response.ok) return response;
+  if (response.ok) {
+    // A web page where JSON or a file was expected means something in front
+    // of the API (a security filter, a captive portal) answered instead.
+    const contentType = response.headers?.get?.("content-type") ?? "";
+    if (contentType.startsWith("text/html")) {
+      throw new ApiError("request_blocked", response.status);
+    }
+    return response;
+  }
   let code = "request_failed";
   try {
     const body = (await response.json()) as { error?: unknown; detail?: unknown };
