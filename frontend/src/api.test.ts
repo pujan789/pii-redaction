@@ -32,3 +32,11 @@ it("turns a validation error body into a stable code instead of an object", asyn
     new ApiError("invalid_request", 422),
   );
 });
+
+it("sends the chosen rotation with the approved boxes", async () => {
+  const { finalizeJob } = await import("./api");
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "queued_redaction" }) });
+  vi.stubGlobal("fetch", fetch);
+  await finalizeJob({ jobId: "j", token: "t" }, [], 90);
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ detections: [], rotation: 90 });
+});

@@ -38,6 +38,8 @@ export type PiiCategory =
   | "signature"
   | "user_added";
 
+export type Rotation = 0 | 90 | 180 | 270;
+
 export interface BoundingBox {
   x1: number;
   y1: number;
@@ -64,6 +66,7 @@ export interface Manifest {
   prompt_version: string;
   model_id: string;
   created_at: string;
+  rotation: Rotation;
 }
 
 export interface Job {

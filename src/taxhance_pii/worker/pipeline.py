@@ -165,6 +165,7 @@ class WorkerPipeline:
             manifest.detections,
             output_path,
             self.settings.render_dpi,
+            manifest.rotation,
         )
         if self.settings.ocr_enabled:
             residual_pages = load_document(

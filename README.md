@@ -23,9 +23,13 @@ storage, database, encryption key, IAM roles, network boundary, and deployment s
 - The delete action removes input, output, and previews immediately. An independent
   cleanup task removes remaining job data no later than one hour after job creation;
   S3 lifecycle and DynamoDB TTL are defense-in-depth fallbacks.
-- After the complete result reaches the browser, the client starts the local save and
-  immediately calls the authenticated delete endpoint. It cannot prove the operating
-  system saved the file, but it deletes only after the full PDF was received successfully.
+- After the complete result reaches the browser in single-document mode, the client
+  starts the local save and immediately calls the authenticated delete endpoint. It
+  cannot prove the operating system saved the file, but it deletes only after the full
+  PDF was received successfully. In batch mode the server copy stays until the user
+  downloads that document or clears the batch, so a finished document can be reopened
+  for manual review and rebuilt without running detection again; the one-hour cleanup
+  still bounds every copy.
 - Redaction is fail-closed: malformed model output, unreadable pages, or residual
   deterministic identifiers prevent a document from being marked complete.
 
@@ -35,11 +39,16 @@ automatic results before sharing. Manual review exposes each proposed redaction 
 ## Batch workflow
 
 Selecting multiple files or a folder defaults to automatic redaction. The browser runs
-two jobs at a time, receives each completed PDF, and deletes its server copy before
-advancing. Clients see one document table with progress, optional previews, failure
-retries, and a single ZIP download. Files that fail are excluded from downloads and
-remain visible for retry; capacity limits pause the waiting queue. The default hourly
-allowance is 100 documents per network, with the existing five-active-job limit intact.
+two jobs at a time and receives each completed PDF. Clients see one document table with
+progress, optional previews, failure retries, and a single ZIP download. Any finished
+document can be reopened with **Review manually**: a dialog shows the pages with the
+existing boxes, the reviewer removes or draws boxes and can rotate the whole document,
+and the server re-renders the PDF from the stored boxes without running detection
+again. Server copies are deleted when a document is downloaded (single or ZIP), when the
+batch is cleared, or at the one-hour deadline, whichever comes first. Files that fail are
+excluded from downloads and remain visible for retry; capacity limits pause the waiting
+queue. The default hourly allowance is 100 documents per network, with the existing
+five-active-job limit intact.
 
 Completed PDFs and waiting source files stay in this tab only. Keep it open until the
 download finishes: refreshing loses those local files. In-flight server jobs can be

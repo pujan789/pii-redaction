@@ -68,6 +68,10 @@ class PiiCategory(StrEnum):
     USER_ADDED = "user_added"
 
 
+# Whole-document page rotation chosen during review, applied to the output.
+Rotation = Literal[0, 90, 180, 270]
+
+
 class BoundingBox(BaseModel):
     """A page-relative box using integer coordinates from 0 through 1000."""
 
@@ -108,6 +112,7 @@ class RedactionManifest(BaseModel):
     prompt_version: str
     model_id: str
     created_at: datetime
+    rotation: Rotation = 0
 
 
 class JobRecord(BaseModel):
@@ -186,3 +191,4 @@ class ManifestUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     detections: list[Detection] = Field(max_length=20_000)
+    rotation: Rotation = 0

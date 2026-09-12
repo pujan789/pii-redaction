@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pypdfium2 as pdfium
 from fastapi import Request
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
@@ -234,3 +235,74 @@ def test_source_ip_on_aws_without_a_proxy_chain_uses_the_gateway_source() -> Non
         event=_aws_event("203.0.113.9"),
     )
     assert api_main._source_ip(request) == "203.0.113.9"
+
+
+def test_complete_batch_job_can_be_reviewed_and_rebuilt(tmp_path: Path, sample_jpeg: bytes) -> None:
+    container = build_container(_settings(tmp_path))
+    previous = api_main.container
+    api_main.container = container
+    try:
+        client = TestClient(api_main.app)
+        created = client.post(
+            "/v1/jobs",
+            json={
+                "filename": "synthetic.jpg",
+                "size_bytes": len(sample_jpeg),
+                "content_type": "image/jpeg",
+                "auto_finalize": True,
+            },
+        ).json()
+        job_id = created["job_id"]
+        headers = {"X-Job-Token": created["access_token"], "Content-Type": "image/jpeg"}
+        client.put(created["upload"]["url"], headers=headers, content=sample_jpeg)
+        client.post(f"/v1/jobs/{job_id}/submit", headers=headers)
+        pipeline = WorkerPipeline(
+            container.settings,
+            container.repository,
+            container.blobs,
+            container.queue,
+            FixedDetector(),
+        )
+        pipeline.process(container.repository.claim_local_task(), TaskType.DETECT)  # type: ignore[arg-type]
+        assert client.get(f"/v1/jobs/{job_id}", headers=headers).json()["status"] == "complete"
+        first_output = (tmp_path / "blobs" / "jobs" / job_id / "redacted.pdf").read_bytes()
+
+        manifest = client.get(f"/v1/jobs/{job_id}/manifest", headers=headers).json()
+        assert len(manifest["detections"]) == 1
+        manual_box = {
+            "id": "manual-1",
+            "page_index": 0,
+            "category": "user_added",
+            "box": {"x1": 100, "y1": 300, "x2": 400, "y2": 340},
+            "confidence": 1,
+            "source": "user",
+        }
+        reopened = client.post(
+            f"/v1/jobs/{job_id}/finalize",
+            headers={"X-Job-Token": created["access_token"]},
+            json={"detections": [*manifest["detections"], manual_box], "rotation": 90},
+        )
+        assert reopened.status_code == 200, reopened.text
+        assert reopened.json()["status"] == "queued_redaction"
+        assert (tmp_path / "blobs" / "jobs" / job_id / "redacted.pdf").read_bytes() == first_output
+        assert client.get(f"/v1/jobs/{job_id}/result", headers=headers).status_code == 409
+
+        claimed = container.repository.claim_local_task()
+        assert claimed is not None and claimed.status == JobStatus.REDACTING
+        pipeline.process(claimed, TaskType.REDACT)
+
+        status = client.get(f"/v1/jobs/{job_id}", headers=headers).json()
+        assert status["status"] == "complete"
+        assert status["finding_count"] == 2
+        assert client.get(f"/v1/jobs/{job_id}/manifest", headers=headers).json()["rotation"] == 90
+        result = client.get(f"/v1/jobs/{job_id}/result", headers=headers)
+        assert result.content.startswith(b"%PDF-")
+        assert result.content != first_output
+        document = pdfium.PdfDocument(result.content)
+        try:
+            width, height = document[0].get_size()
+            assert width > height
+        finally:
+            document.close()
+    finally:
+        api_main.container = previous

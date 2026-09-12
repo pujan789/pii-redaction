@@ -414,3 +414,33 @@ def test_local_cleanup_expires_jobs_without_a_client_poll(
     expired = repository.get("abandoned")
     assert expired is not None and expired.status == JobStatus.EXPIRED
     assert blobs.head(abandoned.input_key) is None
+
+
+def test_validation_failure_after_re_review_keeps_the_previous_output(tmp_path: Path) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    pipeline = _pipeline(tmp_path, repository)
+    job = _job("reviewed", JobStatus.REDACTING, auto_finalize=False)
+    repository.create(job)
+    pipeline.blobs.put_bytes(job.output_key, b"previous", "application/pdf")
+
+    pipeline.fail("reviewed", RedactionValidationError("residual_identifier_detected"))
+
+    stored = repository.get("reviewed")
+    assert stored is not None and stored.status == JobStatus.REVIEW_REQUIRED
+    assert pipeline.blobs.head(job.output_key) is not None
+
+
+def test_processing_error_after_re_review_fails_but_keeps_the_previous_output(
+    tmp_path: Path,
+) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    pipeline = _pipeline(tmp_path, repository)
+    job = _job("reviewed", JobStatus.REDACTING, auto_finalize=False)
+    repository.create(job)
+    pipeline.blobs.put_bytes(job.output_key, b"previous", "application/pdf")
+
+    pipeline.fail("reviewed", RuntimeError("boom"))
+
+    stored = repository.get("reviewed")
+    assert stored is not None and stored.status == JobStatus.FAILED
+    assert pipeline.blobs.head(job.output_key) is not None

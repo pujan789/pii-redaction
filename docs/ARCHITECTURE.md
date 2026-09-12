@@ -41,7 +41,10 @@ grant either application access to the other.
    overlapping boxes.
 7. Store raster previews and a text-free box manifest for human review.
 8. After manual approval, or automatic finalization selected for a batch, paint opaque
-   black rectangles and encode a new image-only PDF.
+   black rectangles, turn every page by the rotation chosen during review, and encode a
+   new image-only PDF. A completed job may be finalized again with an edited manifest
+   (boxes and rotation); the worker re-renders from the stored source and overwrites the
+   output, and the job is treated as human-reviewed from then on.
 9. Reopen the output and fail unless page count, absent text layer/active content, and
    opaque redaction pixels all verify.
 10. OCR the flattened output and fail closed if an SSN-shaped identifier
@@ -61,7 +64,10 @@ redacted strings cannot re-enter the PDF.
 
 The application deadline is 55 minutes after creation. A scheduled cleanup runs every
 five minutes, so deletion occurs no later than the stated one-hour limit even at the
-worst schedule boundary. A successful full-PDF fetch also triggers immediate deletion.
+worst schedule boundary. In single-document mode a successful full-PDF fetch triggers
+immediate deletion; in batch mode the browser deletes a job when its PDF is downloaded
+(alone or in the ZIP) or when the batch is cleared, keeping finished documents available
+for manual review until then.
 The browser can prove receipt of the bytes but cannot prove that the operating system
 completed its save dialog. Explicit deletion tombstones the job before deleting its entire object prefix so a
 concurrent worker cannot recreate a downloadable result. S3 lifecycle and DynamoDB TTL
