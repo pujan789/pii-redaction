@@ -108,6 +108,19 @@ resource "aws_wafv2_web_acl" "public" {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
+
+        # The managed rule blocks any request body over 8 KB. A review approval
+        # sends every redaction box as JSON (roughly 170 bytes each), so a
+        # 50-page document is far past that, and the block came back through
+        # the CloudFront 403 rewrite as a landing page with no CORS headers.
+        # The API enforces its own caps (20,000 boxes; API Gateway and Lambda
+        # payload limits), so the rule only counts here.
+        rule_action_override {
+          name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
+        }
       }
     }
     visibility_config {

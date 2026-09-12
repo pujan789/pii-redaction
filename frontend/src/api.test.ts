@@ -40,3 +40,21 @@ it("sends the chosen rotation with the approved boxes", async () => {
   await finalizeJob({ jobId: "j", token: "t" }, [], 90);
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ detections: [], rotation: 90 });
 });
+
+it("reports a response that is a web page instead of JSON as a blocked request", async () => {
+  const { getJob, ApiError } = await import("./api");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+      json: async () => {
+        throw new SyntaxError("Unexpected token <");
+      },
+    }),
+  );
+  await expect(getJob({ jobId: "j", token: "t" })).rejects.toMatchObject(
+    new ApiError("request_blocked", 200),
+  );
+});

@@ -23,6 +23,7 @@ describe("error messages", () => {
     ["invalid_request", /on our side/i],
     ["active_job_abuse_limit", /office network/i],
     ["hourly_abuse_limit", /100 documents/i],
+    ["request_blocked", /blocked/i],
   ])("has a plain-language message for %s", (code, expected) => {
     expect(messageForCode(code)).toMatch(expected);
   });

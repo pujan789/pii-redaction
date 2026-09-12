@@ -18,6 +18,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   direct_upload_disabled: OUR_SIDE,
   invalid_request: OUR_SIDE,
   request_failed: "The server could not be reached. Check your connection and try again.",
+  request_blocked:
+    "The request was blocked before it reached the service. Try again; if it keeps happening, use Report a problem in the footer.",
 
   // Capacity (per office network, not per person)
   hourly_abuse_limit:
