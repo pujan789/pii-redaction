@@ -127,18 +127,20 @@ describe("PII redaction desk", () => {
     expect(screen.getByRole("radio", { name: /redact automatically/i })).toBeChecked();
     const files = Array.from({ length: 50 }, (_, index) => new File(["synthetic"], `document-${index}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
-    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50));
-    const download = screen.getByRole("button", { name: /download all 50 PDFs/i });
+    await waitFor(() => expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(50));
+    const download = await screen.findByRole("button", { name: /download all 50 PDFs/i });
     expect(apiMocks.createJob).toHaveBeenCalledTimes(50);
     expect(apiMocks.finalizeJob).not.toHaveBeenCalled();
-    expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50);
+    // Server copies stay until the download so any document can be reopened.
+    expect(apiMocks.deleteJob).not.toHaveBeenCalled();
     expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByRole("heading", { name: /your documents are ready/i })).toHaveFocus();
     fireEvent.click(download);
     await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip"));
     expect(zipMocks.createBatchZip.mock.calls[0][0]).toHaveLength(50);
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50));
     expect(screen.getByText(/download started/i)).toBeVisible();
-  });
+  }, 20_000);
 
   it("filters failed files without hiding completed batch downloads", async () => {
     apiMocks.createJob.mockRejectedValueOnce(new Error("offline"));
@@ -669,6 +671,7 @@ describe("PII redaction desk", () => {
     prompt_version: "test",
     model_id: "test",
     created_at: "2099-01-01T00:00:00Z",
+    rotation: 0 as const,
   };
 
   function renderReview(errorCode: string | null = null) {
@@ -691,7 +694,7 @@ describe("PII redaction desk", () => {
     expect(screen.getByText(/cannot return to editing/i)).toBeVisible();
     expect(screen.getByRole("button", { name: /^undo/i })).toBeDisabled();
 
-    fireEvent.click(await screen.findByRole("button", { name: /select ssn/i }));
+    fireEvent.focus((await screen.findAllByRole("button", { name: /ssn redaction/i }))[0]);
     fireEvent.click(screen.getByRole("button", { name: /remove selected box/i }));
     expect(screen.getByText(/^1 person name$/i)).toBeVisible();
     expect(listen.mock.calls.some(([type]) => type === "beforeunload")).toBe(true);
@@ -731,7 +734,7 @@ describe("PII redaction desk", () => {
     const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
 
-    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
     expect(screen.getAllByText(/^no redactions$/i, { selector: "span" })).toHaveLength(2);
     expect(screen.getByText(/2 documents have no redactions/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /no redactions 2/i }));
@@ -753,7 +756,7 @@ describe("PII redaction desk", () => {
     render(<App />);
     const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
-    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
 
     fireEvent.click(screen.getByRole("checkbox", { name: /name pdfs after the originals/i }));
     fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
@@ -764,20 +767,47 @@ describe("PII redaction desk", () => {
     ]);
   });
 
-  it("hands one batch document to manual review and returns to the batch", async () => {
+  it("reopens a finished batch document for review in place", async () => {
     render(<App />);
     const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
-    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
+    const alpha = { jobId: jobIdFor(files[0]), token: `token-${files[0].name}` };
+    apiMocks.getManifest.mockResolvedValue({ ...reviewManifest, job_id: alpha.jobId });
+    apiMocks.finalizeJob.mockResolvedValue({ ...completeJob(alpha.jobId), finding_count: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: /review alpha\.pdf manually/i }));
 
-    expect(await screen.findByRole("heading", { name: /your redacted pdf is ready/i })).toBeVisible();
-    expect(apiMocks.createJob).toHaveBeenLastCalledWith(files[0]);
-    expect(apiMocks.createJob).toHaveBeenCalledTimes(3);
+    expect(await screen.findByRole("heading", { name: "alpha.pdf" })).toBeVisible();
+    expect(apiMocks.getManifest).toHaveBeenCalledWith(alpha);
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(2);
+    fireEvent.focus((await screen.findAllByRole("button", { name: /ssn redaction/i }))[0]);
+    fireEvent.click(screen.getByRole("button", { name: /remove selected box/i }));
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
 
-    fireEvent.click(screen.getByRole("button", { name: /delete now/i }));
-    expect(await screen.findByRole("heading", { name: /your documents are ready/i })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "alpha.pdf" })).not.toBeInTheDocument());
+    expect(apiMocks.finalizeJob).toHaveBeenCalledWith(alpha, [reviewManifest.detections[1]], 0);
+    expect(apiMocks.deleteJob).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /download alpha\.pdf/i }));
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledWith(alpha));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /review alpha\.pdf manually/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("sends the chosen rotation when the reviewer applies the redactions", async () => {
+    renderReview();
+    await screen.findByText(/1 SSN, 1 person name/i);
+    fireEvent.click(screen.getByRole("button", { name: /rotate/i }));
+    fireEvent.click(screen.getByRole("button", { name: /apply redactions/i }));
+    await waitFor(() =>
+      expect(apiMocks.finalizeJob).toHaveBeenCalledWith(
+        { jobId: "review-job", token: "review-token" },
+        reviewManifest.detections,
+        90,
+      ),
+    );
   });
 
   it("states the page and hourly allowances before upload", () => {

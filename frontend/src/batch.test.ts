@@ -68,13 +68,15 @@ describe("automatic batch processing", () => {
     );
     expect(api.createJob).toHaveBeenCalledTimes(50);
     expect(api.createJob).toHaveBeenCalledWith(expect.any(File), true);
-    expect(api.deleteJob).toHaveBeenCalledTimes(50);
+    // Server copies stay until download or clear so any document can be reopened.
+    expect(api.deleteJob).not.toHaveBeenCalled();
+    expect(queue.getSnapshot().items.every((item) => item.credentials)).toBe(true);
     expect(
       new Set(queue.getSnapshot().items.map((item) => item.filename)).size,
     ).toBe(50);
-    expect(sessionStorage.getItem(BATCH_SESSION_KEY)).not.toContain(
-      "file-0.pdf",
-    );
+    // Only positions and credentials persist; never labels, files, or results.
+    const stored = JSON.parse(sessionStorage.getItem(BATCH_SESSION_KEY) ?? "[]");
+    expect(Object.keys(stored[0]).sort()).toEqual(["credentials", "position"]);
   });
 
   it("limits active jobs to two and starts the next as a result is received", async () => {
@@ -162,13 +164,16 @@ describe("automatic batch processing", () => {
     expect(api.createJob).not.toHaveBeenCalled();
   });
 
-  it("keeps a completed PDF available when cleanup fails and allows cleanup retry", async () => {
+  it("keeps a downloaded PDF when its server copy cannot be deleted, then allows retry", async () => {
     api.deleteJob.mockRejectedValueOnce(new Error("offline"));
     const queue = new BatchQueue(files(1));
     queue.start();
     await waitFor(() =>
       expect(queue.getSnapshot().items[0].status).toBe("ready"),
     );
+    expect(queue.getSnapshot().items[0].cleanupError).toBeFalsy();
+
+    expect(await queue.release([1])).toBe(false);
     expect(queue.getSnapshot().items[0]).toMatchObject({
       cleanupError: true,
       result: expect.any(Blob),
@@ -180,6 +185,32 @@ describe("automatic batch processing", () => {
       credentials: undefined,
       result: expect.any(Blob),
     });
+  });
+
+  it("releases only the requested server copies and can replace a result", async () => {
+    const queue = new BatchQueue(files(2));
+    queue.start();
+    await waitFor(() =>
+      expect(queue.getSnapshot().items.every((item) => item.status === "ready")).toBe(true),
+    );
+
+    expect(await queue.release([2])).toBe(true);
+    expect(api.deleteJob).toHaveBeenCalledTimes(1);
+    expect(api.deleteJob).toHaveBeenCalledWith({ jobId: "file-1.pdf", token: "token" });
+    expect(queue.getSnapshot().items[0].credentials).toBeDefined();
+    expect(queue.getSnapshot().items[1].credentials).toBeUndefined();
+
+    const rebuilt = new Blob(["rebuilt"]);
+    queue.replaceResult(1, { ...complete("file-0.pdf"), finding_count: 7 }, rebuilt);
+    expect(queue.getSnapshot().items[0]).toMatchObject({
+      status: "ready",
+      result: rebuilt,
+      job: expect.objectContaining({ finding_count: 7 }),
+    });
+
+    queue.forgetRemote(1);
+    expect(queue.getSnapshot().items[0].credentials).toBeUndefined();
+    expect(api.deleteJob).toHaveBeenCalledTimes(1);
   });
 
   it("pauses a capacity-limited queue without failing every waiting document", async () => {
@@ -206,7 +237,6 @@ describe("automatic batch processing", () => {
 
   it("cleanup retries preserve unrelated results waiting for download recovery", async () => {
     api.getResultBlob.mockRejectedValueOnce(new Error("offline"));
-    api.deleteJob.mockRejectedValueOnce(new Error("offline"));
     const queue = new BatchQueue(files(2));
     queue.start();
     await waitFor(() =>
@@ -217,13 +247,11 @@ describe("automatic batch processing", () => {
     );
     await queue.cleanup();
     expect(queue.getSnapshot().items[0].credentials).toBeDefined();
-    expect(queue.getSnapshot().items[1].credentials).toBeUndefined();
-    expect(api.deleteJob).not.toHaveBeenCalledWith({
-      jobId: "file-0.pdf",
-      token: "token",
-    });
+    expect(queue.getSnapshot().items[1].credentials).toBeDefined();
+    expect(api.deleteJob).not.toHaveBeenCalled();
     await queue.cleanup(true);
     expect(queue.getSnapshot().items[0].credentials).toBeUndefined();
+    expect(queue.getSnapshot().items[1].credentials).toBeUndefined();
   });
 
   it("lets active jobs finish while paused and resumes waiting files", async () => {

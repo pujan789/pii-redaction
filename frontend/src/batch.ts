@@ -13,7 +13,7 @@ import type { Job, JobCredentials } from "./types";
 
 export const BATCH_SESSION_KEY = "taxhance-pii-batch";
 const CONCURRENCY = 2;
-const POLL_INTERVAL = 1800;
+export const POLL_INTERVAL = 1800;
 
 export type BatchStatus =
   "waiting" | "uploading" | "processing" | "receiving" | "ready" | "failed";
@@ -66,8 +66,10 @@ function pauseMessage(code: string): string {
   return `${messageForCode(code)} Your waiting files are still here; resume when ready.`;
 }
 
-// Only two documents occupy server slots at once. Results are received in full
-// before deletion, and retained as browser Blobs until the client saves the ZIP.
+// Only two documents are processed at once. Results are kept as browser Blobs.
+// Server copies stay until the user downloads or clears the batch (or the
+// one-hour expiry) so any finished document can be reopened for manual review
+// without running detection again.
 export class BatchQueue {
   private listeners = new Set<() => void>();
   private active = new Set<number>();
@@ -246,17 +248,7 @@ export class BatchQueue {
         throw new ApiError(job.error_code ?? "processing_failed", 409);
       this.update(item.position, { status: "receiving" });
       const result = await getResultBlob(credentials);
-      this.update(item.position, { result });
-      try {
-        await this.removeRemote(credentials);
-        this.update(item.position, {
-          credentials: undefined,
-          cleanupError: false,
-        });
-      } catch {
-        this.update(item.position, { cleanupError: true });
-      }
-      this.update(item.position, { status: "ready" });
+      this.update(item.position, { result, status: "ready", cleanupError: false });
     } catch (reason) {
       const capacityError = reason instanceof ApiError && CAPACITY_CODES.has(reason.code);
       if (capacityError) {
@@ -289,16 +281,10 @@ export class BatchQueue {
     }
   }
 
-  // Used after processing stops, or for cleanup failures on completed results.
-  async cleanup(all = false) {
+  private async removeMany(select: (item: BatchItem) => boolean): Promise<boolean> {
     let failed = false;
     for (const item of this.state.items) {
-      if (
-        !item.credentials ||
-        this.active.has(item.position) ||
-        (!all && !item.cleanupError)
-      )
-        continue;
+      if (!item.credentials || this.active.has(item.position) || !select(item)) continue;
       try {
         await this.removeRemote(item.credentials);
         this.update(item.position, {
@@ -310,6 +296,26 @@ export class BatchQueue {
         this.update(item.position, { cleanupError: true });
       }
     }
-    if (failed) throw new Error("cleanup_failed");
+    return !failed;
   }
+
+  // Used when the batch is cleared, or to retry earlier cleanup failures.
+  async cleanup(all = false) {
+    const clean = await this.removeMany((item) => all || Boolean(item.cleanupError));
+    if (!clean) throw new Error("cleanup_failed");
+  }
+
+  /** Delete the server copies of the given rows once their PDFs were saved. Never throws. */
+  release = (positions: number[]) =>
+    this.removeMany((item) => positions.includes(item.position));
+
+  /** A manual review rebuilt the PDF; the row shows the new result. */
+  replaceResult = (position: number, job: Job, result: Blob) => {
+    this.update(position, { job, result, status: "ready", error: undefined });
+  };
+
+  /** The server copy is already gone (expired or deleted elsewhere). */
+  forgetRemote = (position: number) => {
+    this.update(position, { credentials: undefined, cleanupError: false });
+  };
 }

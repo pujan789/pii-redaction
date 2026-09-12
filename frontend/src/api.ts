@@ -1,4 +1,4 @@
-import type { CreatedJob, Detection, Job, JobCredentials, Manifest } from "./types";
+import type { CreatedJob, Detection, Job, JobCredentials, Manifest, Rotation } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
@@ -95,12 +95,13 @@ export async function getManifest(credentials: JobCredentials): Promise<Manifest
 export async function finalizeJob(
   credentials: JobCredentials,
   detections: Detection[],
+  rotation: Rotation = 0,
 ): Promise<Job> {
   const response = await checked(
     await fetch(`${API_BASE}/v1/jobs/${credentials.jobId}/finalize`, {
       method: "POST",
       headers: { ...headers(credentials), "Content-Type": "application/json" },
-      body: JSON.stringify({ detections }),
+      body: JSON.stringify({ detections, rotation }),
     }),
   );
   return (await response.json()) as Job;

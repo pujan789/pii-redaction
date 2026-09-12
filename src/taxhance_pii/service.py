@@ -217,12 +217,8 @@ class JobService:
 
     def finalize(self, job_id: str, token: str, update: ManifestUpdate) -> JobResponse:
         job = self.require_job(job_id, token)
-        if job.status != JobStatus.REVIEW_REQUIRED:
-            if job.status in {
-                JobStatus.QUEUED_REDACTION,
-                JobStatus.REDACTING,
-                JobStatus.COMPLETE,
-            }:
+        if job.status not in {JobStatus.REVIEW_REQUIRED, JobStatus.COMPLETE}:
+            if job.status in {JobStatus.QUEUED_REDACTION, JobStatus.REDACTING}:
                 return self.to_response(job)
             raise ServiceError("job_not_reviewable", 409)
         if job.page_count is None:
@@ -234,18 +230,27 @@ class JobService:
             ids.add(detection.id)
         draft = self.manifest(job_id, token)
         approved = draft.model_copy(
-            update={"detections": update.detections, "created_at": utc_now()}
+            update={
+                "detections": update.detections,
+                "rotation": update.rotation,
+                "created_at": utc_now(),
+            }
         )
         self.blobs.put_bytes(
             job.approved_manifest_key,
             approved.model_dump_json().encode("utf-8"),
             "application/json",
         )
+        # A completed job may be reopened with edited boxes; the worker then
+        # re-renders from the stored source. Either way a person approved this
+        # manifest, so a later validation failure returns to review, not FAILED.
         queued = self.repository.update(
             job.job_id,
-            {JobStatus.REVIEW_REQUIRED},
+            {job.status},
             status=JobStatus.QUEUED_REDACTION,
             finding_count=len(update.detections),
+            auto_finalize=False,
+            error_code=None,
         )
         try:
             self.queue.enqueue(QueueMessage(job_id=job.job_id, task=TaskType.REDACT))
@@ -253,7 +258,7 @@ class JobService:
             self.repository.update(
                 job.job_id,
                 {JobStatus.QUEUED_REDACTION},
-                status=JobStatus.REVIEW_REQUIRED,
+                status=job.status,
                 error_code="queue_unavailable",
             )
             raise ServiceError("queue_unavailable", 503) from exc

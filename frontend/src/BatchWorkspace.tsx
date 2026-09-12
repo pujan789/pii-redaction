@@ -5,6 +5,7 @@ import { createBatchZip } from "./batchDownload";
 import { saveBlobAndDelete } from "./download";
 import { uniqueRedactedFilenames } from "./fileSelection";
 import PdfPreview from "./PdfPreview";
+import ReviewDialog from "./ReviewDialog";
 
 const STATUS_LABELS = {
   waiting: "Waiting",
@@ -28,11 +29,9 @@ function csvCell(value: string | number): string {
 export default function BatchWorkspace({
   queue,
   onClose,
-  onReview,
 }: {
   queue: BatchQueue;
   onClose: () => void;
-  onReview?: (item: BatchItem) => void;
 }) {
   const { items, paused, pauseReason } = useSyncExternalStore(
     queue.subscribe,
@@ -43,6 +42,7 @@ export default function BatchWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState<Set<number>>(new Set());
   const [preview, setPreview] = useState<BatchItem | null>(null);
+  const [reviewing, setReviewing] = useState<number | null>(null);
   const [originalNames, setOriginalNames] = useState(false);
   const actionInFlight = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -71,6 +71,7 @@ export default function BatchWorkspace({
     [items, originalNames],
   );
   const outputName = (item: BatchItem) => outputNames[item.position - 1] ?? item.filename;
+  const reviewItem = items.find((item) => item.position === reviewing);
 
   useEffect(() => {
     queue.start();
@@ -122,7 +123,10 @@ export default function BatchWorkspace({
             );
       await saveBlobAndDelete(
         result,
-        async () => {},
+        async () => {
+          // The saved PDFs no longer need their server copies.
+          await queue.release(selected.map((item) => item.position));
+        },
         selected.length === 1 ? outputName(selected[0]) : "redacted-documents.zip",
       );
       setDownloaded(
@@ -145,7 +149,7 @@ export default function BatchWorkspace({
       close &&
       (unsaved || waiting.length > 0) &&
       !window.confirm(
-        "Clear this batch? Unsaved PDFs and waiting files will be removed from this tab.",
+        "Clear this batch? Unsaved PDFs and waiting files will be removed from this tab, and the remaining server copies deleted.",
       )
     )
       return;
@@ -415,19 +419,17 @@ export default function BatchWorkspace({
                             Retry
                           </button>
                         )}
-                      {onReview &&
-                        item.file &&
-                        (item.status === "ready" || item.status === "failed") && (
-                          <button
-                            type="button"
-                            className="batch-text-button"
-                            disabled={Boolean(busy)}
-                            onClick={() => onReview(item)}
-                            aria-label={`Review ${item.label} manually`}
-                          >
-                            Review manually
-                          </button>
-                        )}
+                      {item.status === "ready" && item.credentials && (
+                        <button
+                          type="button"
+                          className="batch-text-button"
+                          disabled={Boolean(busy)}
+                          onClick={() => setReviewing(item.position)}
+                          aria-label={`Review ${item.label} manually`}
+                        >
+                          Review manually
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -485,7 +487,8 @@ export default function BatchWorkspace({
         <p>
           <strong>Keep this tab open until you download.</strong> Refreshing
           clears waiting files and completed local PDFs. Server copies are
-          deleted after receipt or within one hour.
+          deleted when you download or clear the batch, or within one hour;
+          until then any finished document can be reopened with Review manually.
         </p>
         <p>
           Automatic redaction can miss sensitive information. Preview or check
@@ -495,6 +498,15 @@ export default function BatchWorkspace({
       </div>
       {preview && preview.result && (
         <PdfPreview title={preview.label} blob={preview.result} onClose={() => setPreview(null)} />
+      )}
+      {reviewItem?.credentials && (
+        <ReviewDialog
+          position={reviewItem.position}
+          label={reviewItem.label}
+          credentials={reviewItem.credentials}
+          queue={queue}
+          onClose={() => setReviewing(null)}
+        />
       )}
     </section>
   );

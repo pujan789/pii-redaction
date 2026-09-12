@@ -1,43 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getPageBlob } from "./api";
-import {
-  CATEGORY_LABELS,
-  pageBoxCounts,
-  sameDetections,
-  SOURCE_LABELS,
-} from "./reviewSummary";
-import type {
-  BoundingBox,
-  Detection,
-  JobCredentials,
-  Manifest,
-  PiiCategory,
-} from "./types";
+import { nextRotation, orderedBox, type Point, unrotatePoint } from "./reviewGeometry";
+import { CATEGORY_LABELS, pageBoxCounts, sameDetections } from "./reviewSummary";
+import type { Detection, JobCredentials, Manifest, Rotation } from "./types";
 
-const BASE_STAGE_WIDTH = 900;
 const ZOOM_LEVELS = [75, 100, 150, 200, 300];
+const LETTER_ASPECT = 8.5 / 11;
 
 interface ReviewCanvasProps {
   credentials: JobCredentials;
   manifest: Manifest;
   detections: Detection[];
   onChange: (detections: Detection[]) => void;
+  onUndo: () => void;
+  canUndo: boolean;
+  rotation: Rotation;
+  onRotate: (rotation: Rotation) => void;
 }
 
-interface Point {
-  x: number;
-  y: number;
+interface Draft {
+  page: number;
+  start: Point;
+  cursor: Point;
 }
 
-function orderedBox(first: Point, second: Point): BoundingBox | null {
-  const box = {
-    x1: Math.round(Math.min(first.x, second.x)),
-    y1: Math.round(Math.min(first.y, second.y)),
-    x2: Math.round(Math.max(first.x, second.x)),
-    y2: Math.round(Math.max(first.y, second.y)),
+function boxStyle(box: Detection["box"]) {
+  return {
+    left: `${box.x1 / 10}%`,
+    top: `${box.y1 / 10}%`,
+    width: `${(box.x2 - box.x1) / 10}%`,
+    height: `${(box.y2 - box.y1) / 10}%`,
   };
-  return box.x2 - box.x1 >= 3 && box.y2 - box.y1 >= 3 ? box : null;
 }
 
 export default function ReviewCanvas({
@@ -45,53 +39,110 @@ export default function ReviewCanvas({
   manifest,
   detections,
   onChange,
+  onUndo,
+  canUndo,
+  rotation,
+  onRotate,
 }: ReviewCanvasProps) {
-  const [pageIndex, setPageIndex] = useState(0);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState(false);
-  const [start, setStart] = useState<Point | null>(null);
-  const [cursor, setCursor] = useState<Point | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [category, setCategory] = useState<PiiCategory>("user_added");
+  const pageCount = manifest.page_count;
+  const [currentPage, setCurrentPage] = useState(0);
   const [zoom, setZoom] = useState(100);
   const [finalLook, setFinalLook] = useState(false);
-  const stageRef = useRef<HTMLDivElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [wanted, setWanted] = useState<Set<number>>(
+    () => new Set([0, 1].filter((index) => index < pageCount)),
+  );
+  const [images, setImages] = useState<Record<number, string>>({});
+  const [failed, setFailed] = useState<Set<number>>(() => new Set());
+  const [aspects, setAspects] = useState<Record<number, number>>({});
+  const scroller = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const inFlight = useRef<Set<number>>(new Set());
+  const urls = useRef<Map<number, string>>(new Map());
+  const ratios = useRef<Map<number, number>>(new Map());
+  const mounted = useRef(true);
 
-  const pageDetections = useMemo(
-    () => detections.filter((item) => item.page_index === pageIndex),
-    [detections, pageIndex],
-  );
-  const counts = useMemo(
-    () => pageBoxCounts(detections, manifest.page_count),
-    [detections, manifest.page_count],
-  );
+  const counts = useMemo(() => pageBoxCounts(detections, pageCount), [detections, pageCount]);
   const suggestionsIntact = sameDetections(detections, manifest.detections);
-  const draft = start && cursor ? orderedBox(start, cursor) : null;
+  const turned = rotation === 90 || rotation === 270;
 
   useEffect(() => {
-    let active = true;
-    let objectUrl: string | null = null;
-    setImageUrl(null);
-    setLoadError(false);
-    getPageBlob(credentials, pageIndex)
-      .then((blob) => {
-        if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
-        setImageUrl(objectUrl);
-      })
-      .catch(() => active && setLoadError(true));
+    mounted.current = true;
+    const cache = urls.current;
     return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      mounted.current = false;
+      cache.forEach((url) => URL.revokeObjectURL(url));
+      cache.clear();
     };
-  }, [credentials, pageIndex]);
+  }, []);
+
+  // Lazy page images: fetch each wanted page once and keep the object URL for
+  // the life of the canvas so scrolling back never refetches.
+  useEffect(() => {
+    wanted.forEach((index) => {
+      if (urls.current.has(index) || inFlight.current.has(index) || failed.has(index)) return;
+      inFlight.current.add(index);
+      getPageBlob(credentials, index)
+        .then((blob) => {
+          if (!mounted.current) return;
+          const url = URL.createObjectURL(blob);
+          urls.current.set(index, url);
+          setImages((previous) => ({ ...previous, [index]: url }));
+        })
+        .catch(() => {
+          if (mounted.current) setFailed((previous) => new Set(previous).add(index));
+        })
+        .finally(() => inFlight.current.delete(index));
+    });
+  }, [credentials, wanted, failed]);
+
+  // Visible pages (plus one neighbour each way) drive loading and the page
+  // indicator. Without an observer every page loads and the controls lead.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setWanted(new Set(Array.from({ length: pageCount }, (_, index) => index)));
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const additions = new Set<number>();
+        for (const entry of entries) {
+          const index = Number((entry.target as HTMLElement).dataset.pageIndex);
+          ratios.current.set(index, entry.isIntersecting ? entry.intersectionRatio : 0);
+          if (!entry.isIntersecting) continue;
+          for (const near of [index - 1, index, index + 1]) {
+            if (near >= 0 && near < pageCount) additions.add(near);
+          }
+        }
+        if (additions.size) {
+          setWanted((previous) => {
+            const merged = new Set(previous);
+            additions.forEach((index) => merged.add(index));
+            return merged.size === previous.size ? previous : merged;
+          });
+        }
+        let best = -1;
+        let bestRatio = 0;
+        ratios.current.forEach((ratio, index) => {
+          if (ratio > bestRatio || (ratio === bestRatio && ratio > 0 && index < best)) {
+            best = index;
+            bestRatio = ratio;
+          }
+        });
+        if (best >= 0) setCurrentPage(best);
+      },
+      { root: scroller.current, threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    pageRefs.current.forEach((element) => element && observer.observe(element));
+    return () => observer.disconnect();
+  }, [pageCount]);
 
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setSelectedId(null);
-        setStart(null);
-        setCursor(null);
+        setDraft(null);
         return;
       }
       if (!selectedId || (event.key !== "Delete" && event.key !== "Backspace")) return;
@@ -104,37 +155,46 @@ export default function ReviewCanvas({
     return () => window.removeEventListener("keydown", keys);
   }, [detections, onChange, selectedId]);
 
-  function pointFromEvent(event: React.PointerEvent): Point {
-    const bounds = stageRef.current!.getBoundingClientRect();
+  function goToPage(index: number) {
+    const target = Math.max(0, Math.min(pageCount - 1, index));
+    setCurrentPage(target);
+    setSelectedId(null);
+    pageRefs.current[target]?.scrollIntoView({ block: "start" });
+  }
+
+  function pointFromEvent(event: React.PointerEvent<HTMLDivElement>): Point {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const u = (event.clientX - bounds.left) / bounds.width;
+    const v = (event.clientY - bounds.top) / bounds.height;
+    const point = unrotatePoint(u, v, rotation);
     return {
-      x: Math.max(0, Math.min(1000, ((event.clientX - bounds.left) / bounds.width) * 1000)),
-      y: Math.max(0, Math.min(1000, ((event.clientY - bounds.top) / bounds.height) * 1000)),
+      x: Math.max(0, Math.min(1000, point.x * 1000)),
+      y: Math.max(0, Math.min(1000, point.y * 1000)),
     };
   }
 
-  function pointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || !imageUrl) return;
+  function pointerDown(page: number, event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = pointFromEvent(event);
     setSelectedId(null);
-    setStart(point);
-    setCursor(point);
+    setDraft({ page, start: point, cursor: point });
   }
 
   function pointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    if (start) setCursor(pointFromEvent(event));
+    if (draft) setDraft({ ...draft, cursor: pointFromEvent(event) });
   }
 
   function pointerUp(event: React.PointerEvent<HTMLDivElement>) {
-    if (!start) return;
-    const box = orderedBox(start, pointFromEvent(event));
-    setStart(null);
-    setCursor(null);
+    if (!draft) return;
+    const box = orderedBox(draft.start, pointFromEvent(event));
+    const page = draft.page;
+    setDraft(null);
     if (!box) return;
     const detection: Detection = {
       id: crypto.randomUUID(),
-      page_index: pageIndex,
-      category,
+      page_index: page,
+      category: "user_added",
       box,
       confidence: 1,
       source: "user",
@@ -144,73 +204,66 @@ export default function ReviewCanvas({
     setSelectedId(detection.id);
   }
 
-  function pointerCancel() {
-    setStart(null);
-    setCursor(null);
-  }
-
   function removeSelected() {
     if (!selectedId) return;
     onChange(detections.filter((item) => item.id !== selectedId));
     setSelectedId(null);
   }
 
-  function goToPage(next: number) {
-    setPageIndex(Math.max(0, Math.min(manifest.page_count - 1, next)));
-    setSelectedId(null);
-  }
+  const draftBox = draft ? orderedBox(draft.start, draft.cursor) : null;
 
   return (
     <div className="review-workspace">
-      <aside className="review-rail" aria-label="Review controls">
-        <div className="rail-section">
-          <label className="eyebrow" htmlFor="page-select">
+      <div className="review-toolbar" role="toolbar" aria-label="Review controls">
+        <div className="review-toolbar-group">
+          <button
+            type="button"
+            aria-label="Previous page"
+            onClick={() => goToPage(currentPage - 1)}
+            disabled={currentPage === 0}
+          >
+            ←
+          </button>
+          <label className="visually-hidden" htmlFor="page-select">
             Page
           </label>
-          <div className="page-stepper">
-            <button
-              type="button"
-              aria-label="Previous page"
-              onClick={() => goToPage(pageIndex - 1)}
-              disabled={pageIndex === 0}
-            >
-              ←
-            </button>
-            <select
-              id="page-select"
-              value={pageIndex}
-              onChange={(event) => goToPage(Number(event.target.value))}
-            >
-              {counts.map((count, index) => (
-                <option key={index} value={index}>
-                  Page {index + 1} · {count ? `${count} ${count === 1 ? "box" : "boxes"}` : "no boxes"}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              aria-label="Next page"
-              onClick={() => goToPage(pageIndex + 1)}
-              disabled={pageIndex === manifest.page_count - 1}
-            >
-              →
-            </button>
-          </div>
-          <div className="zoom-row">
-            <label htmlFor="zoom-select">Zoom</label>
-            <select
-              id="zoom-select"
-              value={zoom}
-              onChange={(event) => setZoom(Number(event.target.value))}
-            >
-              {ZOOM_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}%
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="final-look">
+          <select
+            id="page-select"
+            value={currentPage}
+            onChange={(event) => goToPage(Number(event.target.value))}
+          >
+            {counts.map((count, index) => (
+              <option key={index} value={index}>
+                Page {index + 1} · {count ? `${count} ${count === 1 ? "box" : "boxes"}` : "no boxes"}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            aria-label="Next page"
+            onClick={() => goToPage(currentPage + 1)}
+            disabled={currentPage >= pageCount - 1}
+          >
+            →
+          </button>
+        </div>
+        <div className="review-toolbar-group">
+          <label htmlFor="zoom-select">Zoom</label>
+          <select
+            id="zoom-select"
+            value={zoom}
+            onChange={(event) => setZoom(Number(event.target.value))}
+          >
+            {ZOOM_LEVELS.map((level) => (
+              <option key={level} value={level}>
+                {level}%
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={() => onRotate(nextRotation(rotation))}>
+            Rotate 90°
+          </button>
+          <label className="review-toggle">
             <input
               type="checkbox"
               checked={finalLook}
@@ -219,41 +272,14 @@ export default function ReviewCanvas({
             Preview final look
           </label>
         </div>
-
-        <div className="rail-section">
-          <p className="eyebrow">Boxes on this page</p>
-          {pageDetections.length ? (
-            <ul className="rail-list" aria-label="Boxes on this page">
-              {pageDetections.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    className={selectedId === item.id ? "is-selected" : ""}
-                    aria-label={`Select ${CATEGORY_LABELS[item.category]}`}
-                    aria-pressed={selectedId === item.id}
-                    onClick={() => setSelectedId(item.id)}
-                  >
-                    <strong>{CATEGORY_LABELS[item.category]}</strong>
-                    <span>{SOURCE_LABELS[item.source]}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="rail-help">
-              No boxes on this page. If it shows sensitive information, drag across it.
-            </p>
-          )}
-          <button
-            className="button button-quiet remove-button"
-            type="button"
-            onClick={removeSelected}
-            disabled={!selectedId}
-          >
+        <div className="review-toolbar-group review-toolbar-actions">
+          <button type="button" onClick={removeSelected} disabled={!selectedId}>
             Remove selected box
           </button>
+          <button type="button" onClick={onUndo} disabled={!canUndo}>
+            Undo
+          </button>
           <button
-            className="button button-quiet remove-button"
             type="button"
             onClick={() => {
               onChange(manifest.detections);
@@ -264,88 +290,83 @@ export default function ReviewCanvas({
             Restore suggestions
           </button>
         </div>
+        <span className="review-hint">Drag to add a box. Delete removes the selected box.</span>
+      </div>
 
-        <div className="rail-section">
-          <label className="eyebrow" htmlFor="redaction-category">
-            New box type
-          </label>
-          <select
-            id="redaction-category"
-            value={category}
-            onChange={(event) => setCategory(event.target.value as PiiCategory)}
-          >
-            {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <p className="rail-help">
-            Defaults keep payer information, account numbers, and city/state/postal code. Drag
-            across anything the detector missed. Delete removes the selected box; Esc clears the
-            selection.
-          </p>
-        </div>
-      </aside>
-
-      <section className="paper-bed" aria-label={`Document page ${pageIndex + 1}`}>
-        <div className="paper-instruction">
-          Boxes are see-through while you review. Click one to select it; drag across anything
-          the detector missed.
-        </div>
-        {loadError ? (
-          <div className="page-failure">The private page preview could not be loaded.</div>
-        ) : imageUrl ? (
-          <div
-            className={`document-stage ${finalLook ? "is-final" : ""}`}
-            data-testid="document-stage"
-            ref={stageRef}
-            style={zoom === 100 ? undefined : { width: `${(BASE_STAGE_WIDTH * zoom) / 100}px` }}
-            onPointerDown={pointerDown}
-            onPointerMove={pointerMove}
-            onPointerUp={pointerUp}
-            onPointerCancel={pointerCancel}
-          >
-            <img src={imageUrl} alt={`Private document page ${pageIndex + 1}`} draggable={false} />
-            {pageDetections.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={`redaction-box ${selectedId === item.id ? "is-selected" : ""}`}
-                style={{
-                  left: `${item.box.x1 / 10}%`,
-                  top: `${item.box.y1 / 10}%`,
-                  width: `${(item.box.x2 - item.box.x1) / 10}%`,
-                  height: `${(item.box.y2 - item.box.y1) / 10}%`,
-                }}
-                aria-label={`${CATEGORY_LABELS[item.category]} redaction`}
-                title={CATEGORY_LABELS[item.category]}
-                onFocus={() => setSelectedId(item.id)}
-                onClick={() => setSelectedId(item.id)}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  setSelectedId(item.id);
-                }}
-              />
-            ))}
-            {draft && (
-              <span
-                className="redaction-box is-draft"
-                style={{
-                  left: `${draft.x1 / 10}%`,
-                  top: `${draft.y1 / 10}%`,
-                  width: `${(draft.x2 - draft.x1) / 10}%`,
-                  height: `${(draft.y2 - draft.y1) / 10}%`,
-                }}
-              />
-            )}
-          </div>
-        ) : (
-          <div className="page-loading" aria-label="Loading private page preview">
-            <span />
-          </div>
-        )}
-      </section>
+      <div className="review-pages" ref={scroller}>
+        {counts.map((_, index) => {
+          const aspect = aspects[index] ?? LETTER_ASPECT;
+          const image = images[index];
+          return (
+            <div
+              key={index}
+              className="review-page"
+              data-testid="review-page"
+              data-page-index={index}
+              aria-current={index === currentPage ? "page" : undefined}
+              aria-label={`Document page ${index + 1}`}
+              ref={(element) => {
+                pageRefs.current[index] = element;
+              }}
+              style={{ width: `${zoom}%`, aspectRatio: turned ? 1 / aspect : aspect }}
+            >
+              {failed.has(index) ? (
+                <div className="page-failure">The private page preview could not be loaded.</div>
+              ) : image ? (
+                <div
+                  className={`document-stage ${finalLook ? "is-final" : ""}`}
+                  data-testid="document-stage"
+                  data-rotation={rotation}
+                  onPointerDown={(event) => pointerDown(index, event)}
+                  onPointerMove={pointerMove}
+                  onPointerUp={pointerUp}
+                  onPointerCancel={() => setDraft(null)}
+                >
+                  <img
+                    src={image}
+                    alt={`Private document page ${index + 1}`}
+                    draggable={false}
+                    onLoad={(event) => {
+                      const { naturalWidth, naturalHeight } = event.currentTarget;
+                      if (naturalWidth && naturalHeight) {
+                        setAspects((previous) => ({
+                          ...previous,
+                          [index]: naturalWidth / naturalHeight,
+                        }));
+                      }
+                    }}
+                  />
+                  {detections
+                    .filter((item) => item.page_index === index)
+                    .map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`redaction-box ${selectedId === item.id ? "is-selected" : ""}`}
+                        style={boxStyle(item.box)}
+                        aria-label={`${CATEGORY_LABELS[item.category]} redaction`}
+                        title={CATEGORY_LABELS[item.category]}
+                        onFocus={() => setSelectedId(item.id)}
+                        onClick={() => setSelectedId(item.id)}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          setSelectedId(item.id);
+                        }}
+                      />
+                    ))}
+                  {draftBox && draft?.page === index && (
+                    <span className="redaction-box is-draft" style={boxStyle(draftBox)} />
+                  )}
+                </div>
+              ) : (
+                <div className="page-loading" aria-label={`Loading page ${index + 1}`}>
+                  <span />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

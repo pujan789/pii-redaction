@@ -16,7 +16,7 @@
 | Recovering covered PDF text | New raster-only PDF; no overlays, text layer, forms, annotations, or attachments |
 | Logs becoming a second document store | No filenames/text/prompts/model outputs; disabled HTTP access logs; opaque IDs only |
 | Upload parser exploit | Type/size/magic checks; isolated non-root worker; read-only container filesystem; no inbound GPU-host ports |
-| Stale documents | 55-minute job deadline, five-minute cleanup, delete-after-download, explicit delete, S3 lifecycle, DynamoDB TTL |
+| Stale documents | 55-minute job deadline, five-minute cleanup, delete-after-download (single files and batch downloads), delete on batch clear, explicit delete, S3 lifecycle, DynamoDB TTL |
 | Worker race after deletion | Tombstone first; status checks during processing; delete prefix if final conditional update loses |
 | Model misses PII | OCR/regex signal, tiled model grounding, adversarial residual pass, manual review mode and guidance to check automatic batch results before sharing, fail-closed validation |
 | Model hallucinates | Model never edits documents; strict schema; bounded boxes; retry then fail closed; user can remove boxes |

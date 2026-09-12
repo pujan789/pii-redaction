@@ -12,7 +12,7 @@ import {
   uploadFile,
 } from "./api";
 import { saveBlobAndDelete } from "./download";
-import { BatchQueue, readBatchSession, type BatchItem } from "./batch";
+import { BatchQueue, readBatchSession } from "./batch";
 import BatchWorkspace from "./BatchWorkspace";
 import { friendlyError, messageForCode } from "./errorMessages";
 import {
@@ -23,7 +23,8 @@ import {
 import PdfPreview from "./PdfPreview";
 import ReviewCanvas from "./ReviewCanvas";
 import { sameDetections, summarizeDetections } from "./reviewSummary";
-import type { Detection, Job, JobCredentials, JobStatus, Manifest } from "./types";
+import type { Job, JobCredentials, JobStatus, Manifest, Rotation } from "./types";
+import { useDetectionHistory } from "./useDetectionHistory";
 
 const SESSION_KEY = "taxhance-pii-active-job";
 const PROCESSING = new Set<JobStatus>([
@@ -35,7 +36,6 @@ const PROCESSING = new Set<JobStatus>([
 const QUEUED = new Set<JobStatus>(["queued_detection", "queued_redaction"]);
 const COLD_START_HINT_AFTER_MS = 60_000;
 const DEADLINE_WARNING_MINUTES = 10;
-const UNDO_LIMIT = 50;
 const REPORT_PROBLEM_HREF =
   "mailto:pujan@taxhance.com?subject=PII%20Redaction%20problem&body=Please%20describe%20what%20happened.%20Do%20not%20attach%20client%20documents.";
 
@@ -111,8 +111,14 @@ export default function App() {
   const [credentials, setCredentials] = useState<JobCredentials | null>(() => readSession());
   const [job, setJob] = useState<Job | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
-  const [detections, setDetections] = useState<Detection[]>([]);
-  const [history, setHistory] = useState<Detection[][]>([]);
+  const {
+    detections,
+    canUndo,
+    update: updateDetections,
+    undo,
+    reset: resetDetections,
+  } = useDetectionHistory();
+  const [rotation, setRotation] = useState<Rotation>(0);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
@@ -158,14 +164,14 @@ export default function App() {
     setCredentials(null);
     setJob(null);
     setManifest(null);
-    setDetections([]);
-    setHistory([]);
+    resetDetections([]);
+    setRotation(0);
     setResultBlob(null);
     setPreviewOpen(false);
     setBusyLabel(null);
     setError(null);
     setLoadFailure(null);
-  }, []);
+  }, [resetDetections]);
 
   const clearSession = useCallback(() => {
     clearCurrentJob();
@@ -198,8 +204,8 @@ export default function App() {
         const draft = await getManifest(credentials);
         if (!isCurrentRequest()) return;
         setManifest(draft);
-        setDetections(draft.detections);
-        setHistory([]);
+        resetDetections(draft.detections);
+        setRotation(draft.rotation);
       }
       setLoadFailure(null);
     } catch (reason) {
@@ -219,7 +225,7 @@ export default function App() {
     } finally {
       if (refreshInFlight.current === request) refreshInFlight.current = null;
     }
-  }, [clearCurrentJob, clearSession, credentials, manifest, pendingFiles]);
+  }, [clearCurrentJob, clearSession, credentials, manifest, pendingFiles, resetDetections]);
 
   useEffect(() => {
     if (credentials) void refresh();
@@ -262,7 +268,9 @@ export default function App() {
     }
   }, [batchPosition, batchTotal, credentials]);
 
-  const editsDirty = Boolean(manifest && !sameDetections(detections, manifest.detections));
+  const editsDirty = Boolean(
+    manifest && (!sameDetections(detections, manifest.detections) || rotation !== manifest.rotation),
+  );
 
   useEffect(() => {
     // Review edits live only in this tab until they are approved; waiting
@@ -275,18 +283,6 @@ export default function App() {
     window.addEventListener("beforeunload", preventLoss);
     return () => window.removeEventListener("beforeunload", preventLoss);
   }, [editsDirty, pendingFiles.length]);
-
-  function updateDetections(next: Detection[]) {
-    setHistory((previous) => [...previous.slice(-(UNDO_LIMIT - 1)), detections]);
-    setDetections(next);
-  }
-
-  function undo() {
-    const previous = history.at(-1);
-    if (!previous) return;
-    setHistory((stack) => stack.slice(0, -1));
-    setDetections(previous);
-  }
 
   async function startFile(file: File, position: number, total: number) {
     if (jobStartInFlight.current) return;
@@ -387,15 +383,6 @@ export default function App() {
     void startFile(first, 1, selection.accepted.length);
   }
 
-  function reviewBatchItem(item: BatchItem) {
-    if (!item.file || busyLabel || jobStartInFlight.current || actionInFlight.current) return;
-    setError(null);
-    setNotice(null);
-    setBatchTotal(1);
-    setBatchPosition(1);
-    void startFile(item.file, 1, 1);
-  }
-
   function startNextFile(message: string): boolean {
     const [next, ...remaining] = pendingFiles;
     if (!next) return false;
@@ -493,7 +480,7 @@ export default function App() {
     setBusyLabel("Applying the approved redactions…");
     setError(null);
     try {
-      const current = await finalizeJob(credentials, detections);
+      const current = await finalizeJob(credentials, detections, rotation);
       setJob(current);
       setBusyLabel(null);
     } catch (reason) {
@@ -663,7 +650,6 @@ export default function App() {
         {!showJobSection && batchQueue ? (
           <BatchWorkspace
             queue={batchQueue}
-            onReview={reviewBatchItem}
             onClose={() => {
               setBatchQueue(null);
               setNotice(null);
@@ -905,10 +891,15 @@ export default function App() {
                   </div>
                 )}
                 <ReviewCanvas
+                  key={credentials!.jobId}
                   credentials={credentials!}
                   manifest={manifest}
                   detections={detections}
                   onChange={updateDetections}
+                  onUndo={undo}
+                  canUndo={canUndo}
+                  rotation={rotation}
+                  onRotate={setRotation}
                 />
                 <div className="approval-bar">
                   <div>
@@ -917,14 +908,6 @@ export default function App() {
                     <span>You cannot return to editing after this step.</span>
                   </div>
                   <div className="approval-actions">
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      onClick={undo}
-                      disabled={Boolean(busyLabel) || history.length === 0}
-                    >
-                      Undo
-                    </button>
                     <button
                       className="button button-primary"
                       type="button"
