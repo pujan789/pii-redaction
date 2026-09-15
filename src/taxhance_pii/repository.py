@@ -299,8 +299,18 @@ class DynamoJobRepository:
             "expires_at_epoch": _epoch(job.expires_at),
             "client_hash": job.client_hash,
             "version": job.version,
-            "payload": _serialize(job),
+            # Keep the shared JSON payload readable by pre-analytics workers.
+            # Older writers may drop this optional counter flag during a rollout,
+            # but processing stays compatible in both directions.
+            "payload": job.model_dump_json(exclude={"completed_once"}),
+            "completed_once": job.completed_once,
         }
+
+    @staticmethod
+    def _from_item(item: dict[str, object]) -> JobRecord:
+        job = _deserialize(str(item["payload"]))
+        job.completed_once = item.get("completed_once") is True
+        return job
 
     def create(self, job: JobRecord) -> None:
         try:
@@ -313,7 +323,7 @@ class DynamoJobRepository:
 
     def get(self, job_id: str) -> JobRecord | None:
         item = self.table.get_item(Key={"job_id": job_id}, ConsistentRead=True).get("Item")
-        return _deserialize(str(item["payload"])) if item else None
+        return self._from_item(item) if item else None
 
     def update(
         self,
@@ -349,7 +359,7 @@ class DynamoJobRepository:
         request: dict[str, object] = {
             "IndexName": self.CLIENT_INDEX,
             "KeyConditionExpression": condition,
-            "ProjectionExpression": "payload",
+            "ProjectionExpression": "payload, completed_once",
         }
         items: list[dict[str, object]] = []
         while True:
@@ -359,7 +369,7 @@ class DynamoJobRepository:
             if not last_key:
                 break
             request["ExclusiveStartKey"] = last_key
-        return [_deserialize(str(item["payload"])) for item in items]
+        return [self._from_item(item) for item in items]
 
     def count_recent(self, client_hash: str, since: datetime) -> int:
         return len(self._client_jobs(client_hash, since))
@@ -388,7 +398,7 @@ class DynamoJobRepository:
             "Limit": limit,
             "FilterExpression": Attr("expires_at_epoch").lte(_epoch(before))
             & Attr("status").ne(JobStatus.EXPIRED.value),
-            "ProjectionExpression": "payload",
+            "ProjectionExpression": "payload, completed_once",
         }
         items: list[dict[str, object]] = []
         while len(items) < limit:
@@ -398,7 +408,7 @@ class DynamoJobRepository:
             if not last_key:
                 break
             request["ExclusiveStartKey"] = last_key
-        return [_deserialize(str(item["payload"])) for item in items[:limit]]
+        return [self._from_item(item) for item in items[:limit]]
 
     def claim_local_task(self) -> JobRecord | None:
         raise NotImplementedError("AWS workers claim tasks from SQS")

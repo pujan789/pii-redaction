@@ -136,7 +136,7 @@ describe("PII redaction desk", () => {
     expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByRole("heading", { name: /your documents are ready/i })).toHaveFocus();
     fireEvent.click(download);
-    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip"));
+    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip", 50));
     expect(zipMocks.createBatchZip.mock.calls[0][0]).toHaveLength(50);
     await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50));
     expect(screen.getByText(/download started/i)).toBeVisible();

@@ -102,7 +102,8 @@ GPU. Document inference does not use a third-party AI API. See the
 - **Processing stays within the deployment.** A local installation stores and processes
   documents on your server. The AWS deployment uses a dedicated document bucket and
   GPU worker in the account running the service.
-- **Each job has its own access token.** There are no user accounts or shared job indexes.
+- **Each job has its own access token.** Redacting documents requires no account,
+  and there is no shared job index.
 - **Logs exclude document contents.** Application logs use opaque job IDs and counters,
   without filenames, document text, prompts containing that text, access tokens, or
   detected personal information.
@@ -114,6 +115,10 @@ GPU. Document inference does not use a third-party AI API. See the
 - **Retention is limited to one hour from job creation.** A separate cleanup task
   removes remaining job data. S3 lifecycle rules and DynamoDB TTL provide additional
   cleanup safeguards in AWS. The delete action removes inputs, outputs, and previews.
+- **Usage analytics contain aggregate counts.** These cover visits, page views,
+  document activity, batch sizes, and processing time. They contain no raw IPs,
+  filenames, document contents, or traffic sources. Analytics access is restricted
+  to a separate owner account. See the [analytics data policy](docs/ANALYTICS.md).
 
 This service has separate code, storage, database, encryption keys, access roles,
 network boundaries, and deployment state from Taxhance AutoKey.

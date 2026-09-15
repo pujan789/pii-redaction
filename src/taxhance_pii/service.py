@@ -5,6 +5,7 @@ import logging
 import uuid
 from datetime import timedelta
 
+from taxhance_pii.analytics import emit_metrics
 from taxhance_pii.config import Settings
 from taxhance_pii.domain import (
     CreateJobRequest,
@@ -191,6 +192,7 @@ class JobService:
                 error_code="queue_unavailable",
             )
             raise ServiceError("queue_unavailable", 503) from exc
+        emit_metrics(self.settings, DocumentsSubmitted=1)
         return self.to_response(queued)
 
     def status(self, job_id: str, token: str) -> JobResponse:

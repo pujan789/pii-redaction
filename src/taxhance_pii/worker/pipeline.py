@@ -4,9 +4,11 @@ import contextlib
 import logging
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
+from taxhance_pii.analytics import emit_metrics
 from taxhance_pii.config import Settings
 from taxhance_pii.domain import (
     JobRecord,
@@ -55,10 +57,12 @@ class WorkerPipeline:
         self.detector = detector
 
     def process(self, job: JobRecord, task: TaskType) -> None:
+        started = time.monotonic()
         if task == TaskType.DETECT:
             self._detect(job)
         else:
             self._redact(job)
+        emit_metrics(self.settings, ProcessingSeconds=time.monotonic() - started)
 
     def _load_pages(self, job: JobRecord, directory: Path) -> tuple[Path, list[PageArtifact]]:
         input_path = directory / f"source{job.file_extension}"
@@ -191,6 +195,7 @@ class WorkerPipeline:
                 job.job_id,
                 {JobStatus.REDACTING},
                 status=JobStatus.COMPLETE,
+                completed_once=True,
                 pages_completed=pages,
                 finding_count=finding_count,
                 error_code=None,
@@ -203,6 +208,8 @@ class WorkerPipeline:
                 raise JobCancelled("job_deleted") from exc
             # Another worker owns the job now; its output must stay untouched.
             raise JobCancelled("job_state_changed") from exc
+        if not job.completed_once:
+            emit_metrics(self.settings, DocumentsCompleted=1, PagesCompleted=pages)
 
     def _assert_active(self, job_id: str, expected: JobStatus) -> None:
         current = self.repository.get(job_id)
@@ -249,6 +256,7 @@ class WorkerPipeline:
             )
         except StateConflict:
             return
+        emit_metrics(self.settings, DocumentsFailed=1)
         logger.error(
             "job_failed",
             extra={"job_id": job_id, "error_code": code, "error_type": type(error).__name__},

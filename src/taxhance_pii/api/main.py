@@ -6,12 +6,21 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from mangum import Mangum
 from starlette.middleware.base import RequestResponseEndpoint
 
+from taxhance_pii.analytics import (
+    PAGE_METRICS,
+    Dashboard,
+    PageView,
+    UsageAction,
+    emit_metrics,
+    read_dashboard,
+    require_owner,
+)
 from taxhance_pii.container import Container, get_container
 from taxhance_pii.domain import (
     BlobAccess,
@@ -41,7 +50,7 @@ app.add_middleware(
     allow_origins=container.settings.origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Job-Token"],
+    allow_headers=["Content-Type", "X-Job-Token", "Authorization"],
     max_age=600,
 )
 
@@ -54,6 +63,8 @@ async def security_headers(request: Request, call_next: RequestResponseEndpoint)
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    if request.url.path.startswith("/v1/owner/"):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     return response
 
 
@@ -137,6 +148,75 @@ def ready() -> dict[str, str]:
 @app.post("/v1/jobs", response_model=CreateJobResponse, status_code=status.HTTP_201_CREATED)
 def create_job(payload: CreateJobRequest, request: Request) -> CreateJobResponse:
     return _service().create_job(payload, _source_ip(request))
+
+
+@app.post("/v1/analytics/page-view", status_code=204, include_in_schema=False)
+async def page_view(request: Request) -> Response:
+    body = await _usage_body(request)
+    if body is None:
+        return Response(status_code=204)
+    try:
+        payload = PageView.model_validate_json(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid_page_view") from exc
+    metrics = {PAGE_METRICS[payload.page]: 1}
+    if payload.new_visit:
+        metrics["Visits"] = 1
+    emit_metrics(container.settings, **metrics)
+    return Response(status_code=204)
+
+
+async def _usage_body(request: Request) -> bytes | None:
+    if not container.settings.analytics_enabled:
+        return None
+    if request.headers.get("origin") not in container.settings.origins:
+        raise HTTPException(status_code=403, detail="origin_not_allowed")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 128:
+            raise HTTPException(status_code=413, detail="request_too_large")
+    return bytes(body)
+
+
+@app.post("/v1/analytics/action", status_code=204, include_in_schema=False)
+async def usage_action(request: Request) -> Response:
+    body = await _usage_body(request)
+    if body is None:
+        return Response(status_code=204)
+    try:
+        payload = UsageAction.model_validate_json(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid_usage_event") from exc
+    if payload.action == "download":
+        emit_metrics(container.settings, DownloadsStarted=1, DocumentsDownloaded=payload.documents)
+    elif payload.documents > 1:
+        emit_metrics(
+            container.settings, BatchesSelected=1, BatchDocumentsSelected=payload.documents
+        )
+    return Response(status_code=204)
+
+
+@app.get("/v1/owner/config", include_in_schema=False)
+def owner_config() -> dict[str, str]:
+    settings = container.settings
+    if not settings.analytics_enabled or not settings.analytics_client_id:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {
+        "client_id": settings.analytics_client_id,
+        "login_domain": settings.analytics_login_domain,
+        "callback_url": settings.analytics_callback_url,
+    }
+
+
+@app.get("/v1/owner/analytics", response_model=Dashboard, include_in_schema=False)
+def owner_analytics(request: Request, days: int = Query(default=30, ge=1, le=90)) -> Dashboard:
+    require_owner(request, container.settings)
+    try:
+        return read_dashboard(container.settings, days)
+    except Exception as exc:
+        logger.warning("analytics_read_failed")
+        raise HTTPException(status_code=503, detail="analytics_unavailable") from exc
 
 
 @app.put("/v1/jobs/{job_id}/content", status_code=status.HTTP_204_NO_CONTENT)

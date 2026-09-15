@@ -198,6 +198,8 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "PII_TOKEN_PEPPER_SECRET_ARN", value = aws_secretsmanager_secret.token_pepper.arn },
       { name = "PII_MODEL_ID", value = var.model_id },
       { name = "PII_MODEL_REVISION", value = var.model_revision },
+      { name = "PII_ANALYTICS_ENABLED", value = "true" },
+      { name = "PII_ANALYTICS_DEPLOYMENT", value = local.prefix },
       { name = "PII_VLLM_LAUNCH", value = "true" },
       { name = "PII_VLLM_PORT", value = "8000" },
       { name = "PII_DETECTOR_CONCURRENCY", value = "8" },

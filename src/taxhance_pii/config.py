@@ -65,6 +65,13 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    analytics_enabled: bool = False
+    analytics_deployment: str = "pii-redaction-prod"
+    analytics_user_pool_id: str = ""
+    analytics_client_id: str = ""
+    analytics_login_domain: str = ""
+    analytics_callback_url: str = ""
+
     @property
     def origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]

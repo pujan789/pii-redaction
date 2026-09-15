@@ -12,6 +12,7 @@ import {
   uploadFile,
 } from "./api";
 import { saveBlobAndDelete } from "./download";
+import { recordUsageAction } from "./pageViews";
 import { BatchQueue, readBatchSession } from "./batch";
 import BatchWorkspace from "./BatchWorkspace";
 import { friendlyError, messageForCode } from "./errorMessages";
@@ -361,12 +362,14 @@ export default function App() {
     }
 
     if (selection.accepted.length > 1 && automaticBatch) {
+      recordUsageAction("batch", selection.accepted.length);
       setNotice(skippedNotes.join(" ") || null);
       setBatchQueue(new BatchQueue(selection.accepted));
       return;
     }
 
     const [first, ...pending] = selection.accepted;
+    if (selection.accepted.length > 1) recordUsageAction("batch", selection.accepted.length);
     const notes: string[] = [];
     if (selection.accepted.length > 1) {
       notes.push(`${selection.accepted.length} supported files queued.`);

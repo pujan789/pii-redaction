@@ -87,6 +87,27 @@ def _deleted_job(job_id: str) -> JobRecord:
     return _job(job_id)
 
 
+def test_analytics_counts_a_completed_document_once_after_rebuild(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    from unittest.mock import Mock
+
+    from taxhance_pii.worker import pipeline as pipeline_module
+
+    repository = SQLiteJobRepository(tmp_path / "jobs.db")
+    first = _job("synthetic-analytics", JobStatus.REDACTING)
+    repository.create(first)
+    pipeline = _pipeline(tmp_path, repository)
+    emit = Mock()
+    monkeypatch.setattr(pipeline_module, "emit_metrics", emit)
+    pipeline._mark_complete(first, pages=3, finding_count=2)
+    emit.assert_called_once_with(pipeline.settings, DocumentsCompleted=1, PagesCompleted=3)
+    reopened = repository.update(first.job_id, {JobStatus.COMPLETE}, status=JobStatus.REDACTING)
+    assert reopened.completed_once is True
+    pipeline._mark_complete(reopened, pages=3, finding_count=1)
+    assert emit.call_count == 1
+
+
 def _pipeline(tmp_path: Path, repository: SQLiteJobRepository) -> WorkerPipeline:
     return WorkerPipeline(
         Settings(data_dir=tmp_path),

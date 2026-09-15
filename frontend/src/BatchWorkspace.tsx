@@ -128,6 +128,7 @@ export default function BatchWorkspace({
           await queue.release(selected.map((item) => item.position));
         },
         selected.length === 1 ? outputName(selected[0]) : "redacted-documents.zip",
+        selected.length,
       );
       setDownloaded(
         (previous) =>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -108,6 +109,18 @@ def test_dynamo_client_query_paginates() -> None:
 
     assert [job.job_id for job in repository._client_jobs(first.client_hash)] == ["first", "second"]
     assert table.requests[1]["ExclusiveStartKey"] == {"job_id": "first"}
+
+
+def test_dynamo_completion_flag_preserves_legacy_payload_compatibility() -> None:
+    original = _job().model_copy(update={"completed_once": True})
+    item = DynamoJobRepository._item(original)
+    payload = json.loads(str(item["payload"]))
+    assert "completed_once" not in payload
+    assert set(payload) == set(JobRecord.model_fields) - {"completed_once"}
+    assert DynamoJobRepository._from_item(item) == original
+    # A record written by the previous deployment is still readable.
+    del item["completed_once"]
+    assert not DynamoJobRepository._from_item(item).completed_once
 
 
 def test_dynamo_count_and_expiry_scans_paginate() -> None:

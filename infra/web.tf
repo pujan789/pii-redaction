@@ -135,6 +135,39 @@ resource "aws_wafv2_web_acl" "public" {
     metric_name                = "${local.prefix}-public"
     sampled_requests_enabled   = false
   }
+
+  rule {
+    name     = "analytics-rate-limit"
+    priority = 3
+    action {
+      block {}
+    }
+    statement {
+      rate_based_statement {
+        aggregate_key_type    = "IP"
+        limit                 = 100
+        evaluation_window_sec = 300
+        scope_down_statement {
+          byte_match_statement {
+            positional_constraint = "STARTS_WITH"
+            search_string         = "/v1/analytics/"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "NONE"
+            }
+          }
+        }
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.prefix}-analytics-rate-limit"
+      sampled_requests_enabled   = false
+    }
+  }
 }
 
 # The S3 REST origin with OAC performs no directory-index resolution, so /app/

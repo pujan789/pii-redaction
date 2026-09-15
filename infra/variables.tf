@@ -59,6 +59,17 @@ variable "deploy_application" {
   default     = false
 }
 
+variable "analytics_owner_url" {
+  description = "Exact HTTPS callback for the unlinked owner console; include the trailing slash."
+  type        = string
+  default     = "https://taxhance.com/pii-redaction/owner-console/"
+
+  validation {
+    condition     = can(regex("^https://[a-z0-9.-]+(?:/[a-zA-Z0-9_-]+)*/$", var.analytics_owner_url))
+    error_message = "analytics_owner_url must be an HTTPS URL with a trailing slash and no query string."
+  }
+}
+
 variable "lambda_image_uri" {
   description = "Immutable ECR Lambda image URI, preferably with a sha256 digest."
   type        = string

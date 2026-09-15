@@ -14,6 +14,7 @@ export default defineConfig({
         landing: "index.html",
         app: "app/index.html",
         selfHosting: "self-hosting/index.html",
+        owner: "owner-console/index.html",
       },
     },
   },

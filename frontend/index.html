@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-analytics-page="landing">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -270,9 +270,9 @@
               </p>
             </article>
             <article class="pledge">
-              <h3>No accounts to breach</h3>
+              <h3>No account needed to redact</h3>
               <p>
-                Each job lives behind its own unguessable link. There is no user directory and
+                Each job lives behind its own unguessable link. There is no client directory and
                 no shared document index.
               </p>
             </article>
@@ -291,6 +291,13 @@
               </p>
             </aside>
           </div>
+          <p class="muted" style="margin-top: 24px; line-height: 1.7;">
+            I collect aggregate usage counts to understand whether the tool is useful:
+            visits, page views, document uploads and downloads, batch sizes, failures, and
+            processing time. These analytics contain no raw IP addresses, filenames,
+            document contents, or traffic sources. A timestamp in this browser tab helps
+            estimate visits; it is not sent to the server. Only the owner can view analytics.
+          </p>
         </div>
       </section>
 
@@ -330,7 +337,7 @@
         <div class="wrap">
           <div class="sec-head">
             <span class="eyebrow">Pricing</span>
-            <h2>Free. No accounts and no feature tiers.</h2>
+            <h2>Free. No signup and no feature tiers.</h2>
           </div>
           <div class="price-grid">
             <article class="price-card">
@@ -446,5 +453,6 @@
         <span>AGPL-3.0 with a noncommercial private-use exception</span>
       </div>
     </footer>
+    <script type="module" src="/src/pageViews.ts"></script>
   </body>
 </html>

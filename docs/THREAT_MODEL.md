@@ -22,6 +22,8 @@
 | Model hallucinates | Model never edits documents; strict schema; bounded boxes; retry then fail closed; user can remove boxes |
 | Cost/denial-of-wallet attack | WAF limit of 2,000 requests per IP per five minutes, per-IP issuance and active-job limits, byte/page caps, bounded queue, API Gateway/account throttles, AWS Budget |
 | Cross-project access | Dedicated KMS key, buckets, table, queue, roles, VPC, state, and tag boundary; no Autokey IAM actions |
+| Public access to usage analytics | Separate Cognito pool with public registration disabled; authorization code + PKCE; API Gateway verifies access tokens and the API requires explicit owner-group membership |
+| Analytics retaining private information | Fixed numeric counters and one deployment dimension; no raw IPs, document identifiers, content, filenames, referrers, or browser fingerprints |
 | Supply-chain drift | Locked Python/npm dependencies, pinned model commit, pinned base images, CI scans, ECR image scanning |
 
 The WAF request allowance includes CORS preflights, status polling, result retrieval,
@@ -35,3 +37,8 @@ hour and five active jobs, so a higher HTTP allowance does not increase the job 
 - Accepting arbitrary Office archives or encrypted/password-protected PDFs in v0.1
 - Using customer documents for training, analytics, support, or debugging
 - Operating from the AWS root principal after the deployment role is bootstrapped
+
+Aggregate usage counters are described in [ANALYTICS.md](ANALYTICS.md). They count
+operations without examining or retaining customer document contents. The owner
+console is unlinked and marked noindex; access control does not rely on its URL
+remaining secret. Self-hosted local installations leave collection disabled by default.
