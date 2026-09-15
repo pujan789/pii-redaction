@@ -1,125 +1,176 @@
-# TaxHance PII Redaction
+# [Taxhance PII Redaction](https://taxhance.com/pii-redaction)
 
-An auditable, self-hostable PII redaction service designed for CPA and tax-document
-workflows. Detection is text-anchored: each page is serialized into a
-layout-preserving text grid, a pinned local text LLM (`google/gemma-4-E2B-it`
-served by vLLM) names the client-side PII strings, and redaction boxes come from
-PDF/OCR word geometry — the model never draws coordinates. A deterministic
-SSN-shape safety net backstops the model, and the output is a new raster-only
-PDF so covered text, hidden layers, annotations, and source metadata are not
-recoverable.
+Remove personal information from tax documents before sharing them. Taxhance PII
+Redaction detects client identifiers, lets you review and edit the redactions, and
+exports a new PDF with the covered information removed.
 
-This repository is intentionally isolated from TaxHance Autokey. It has its own code,
-storage, database, encryption key, IAM roles, network boundary, and deployment state.
+Built for CPAs and tax firms working with returns, W-2s, 1099s, K-1s, and scanned
+client documents. Use the hosted tool or run the same pipeline on your own servers.
 
-## Privacy contract
+**[Use PII Redaction](https://taxhance.com/pii-redaction)** ·
+[Self-hosting](#local-self-hosting) ·
+[Documentation](#documentation) ·
+[taxhance.com](https://taxhance.com)
 
-- Documents stay on the selected host. The production design sends them only to the
-  dedicated S3 bucket and GPU worker in your AWS account.
-- Application logs contain opaque job IDs and counters, never filenames, document
-  text, model prompts containing document text, access tokens, or detected PII.
-- Each job has an unguessable bearer token. There are no user accounts or shared job
-  indexes.
-- The delete action removes input, output, and previews immediately. An independent
-  cleanup task removes remaining job data no later than one hour after job creation;
-  S3 lifecycle and DynamoDB TTL are defense-in-depth fallbacks.
-- After the complete result reaches the browser in single-document mode, the client
-  starts the local save and immediately calls the authenticated delete endpoint. It
-  cannot prove the operating system saved the file, but it deletes only after the full
-  PDF was received successfully. In batch mode the server copy stays until the user
-  downloads that document or clears the batch, so a finished document can be reopened
-  for manual review and rebuilt without running detection again; the one-hour cleanup
-  still bounds every copy.
-- Redaction is fail-closed: malformed model output, unreadable pages, or residual
-  deterministic identifiers prevent a document from being marked complete.
+## What you can do
 
-No automated system can promise perfect PII recognition. The UI asks clients to check
-automatic results before sharing. Manual review exposes each proposed redaction for editing.
+- **Redact PDFs and scans.** Upload PDFs, PNGs, JPEGs, or TIFFs.
+- **Process a batch.** Select multiple files or a folder, then download individual
+  results or a ZIP.
+- **Review every box.** Add or remove redactions, rotate the whole document, and
+  reopen completed batch documents for another review.
+- **Keep useful tax data.** The default policy targets client information while
+  preserving amounts and issuer details.
+- **Run it yourself.** Self-host with Docker Compose on an NVIDIA GPU server or
+  deploy to your own AWS account.
 
-## Batch workflow
+## Use the hosted tool
 
-Selecting multiple files or a folder defaults to automatic redaction. The browser runs
-two jobs at a time and receives each completed PDF. Clients see one document table with
-progress, optional previews, failure retries, and a single ZIP download. Any finished
-document can be reopened with **Review manually**: a dialog shows the pages with the
-existing boxes, the reviewer removes or draws boxes and can rotate the whole document,
-and the server re-renders the PDF from the stored boxes without running detection
-again. Server copies are deleted when a document is downloaded (single or ZIP), when the
-batch is cleared, or at the one-hour deadline, whichever comes first. Files that fail are
-excluded from downloads and remain visible for retry; capacity limits pause the waiting
-queue. The default hourly allowance is 100 documents per network, with the existing
-five-active-job limit intact.
+1. Open [Taxhance PII Redaction](https://taxhance.com/pii-redaction).
+2. Upload a document, multiple files, or a folder.
+3. Review the proposed redactions, or use automatic redaction for a batch.
+4. Download the redacted PDFs individually or as a ZIP.
 
-Completed PDFs and waiting source files stay in this tab only. Keep it open until the
-download finishes: refreshing loses those local files. In-flight server jobs can be
-recovered from their tab-scoped tokens; filenames and document contents are not persisted
-in browser storage. ZIP exports use neutral numbered filenames matching the document
-table and must total less than 4 GB; individual downloads remain available.
+Single-document uploads open manual review. Batches default to automatic redaction;
+choose **Review each document** before uploading if you want to approve every file.
+You can also select **Review manually** on a finished batch document to change its
+boxes and rebuild the PDF without running detection again.
 
-Choose **Review each document** before uploading to retain the manual editing workflow.
-Single-file uploads continue to use manual review.
+Automatic detection can miss information. Check the results before sharing, especially
+if you need to hide fields that the default policy keeps visible.
+
+### Working with batches
+
+The browser processes two documents at a time and shows progress, previews, and retry
+options in one table. Failed files stay visible for retry and are excluded from downloads.
+Capacity limits pause the waiting queue.
+
+Keep the tab open until your downloads finish. Completed PDFs and files waiting to
+upload are held in that tab; refreshing loses those local copies. In-flight server
+jobs can be recovered from tab-scoped access tokens. Filenames and document contents
+are not saved in browser storage.
+
+ZIP downloads use neutral numbered filenames matching the document table and must
+total less than 4 GB. Individual downloads remain available. Default limits are
+100 documents per hour and five active jobs per network; self-hosted installations
+can adjust these in [`.env.example`](.env.example).
 
 ## Default redaction policy
 
-The automatic policy is recipient/client-side by design. It redacts private recipient,
-taxpayer, spouse, dependent, employee, and beneficiary information: person names,
-SSN/ITIN/TIN values (including masked forms), the street line of the client's
-address, private client identifiers, personal email/phone, and dates of
-birth/death. It intentionally keeps payer/payor, employer, issuer, and
-financial-institution information visible — names, addresses, phones, and EINs —
-along with account numbers, amounts, public form/OMB/control numbers, and the
-city/state/ZIP portion of any address. Any SSN-shaped value (3-2-4) is always
-redacted regardless of label, which is the fail-closed direction on forms whose
-labels are ambiguous about whose number a field holds.
+The policy distinguishes the client from the organization issuing the document.
+For example, a taxpayer's name and SSN are targets for redaction, while the employer's
+name and EIN on a W-2 stay visible.
 
-These are defaults, not restrictions: the review screen can remove any proposed box or
-add a manual box over information the operator chooses to hide. The complete, testable
-policy is documented in [`docs/REDACTION_POLICY.md`](docs/REDACTION_POLICY.md).
+| Redacted automatically | Kept visible by default |
+| --- | --- |
+| Names of taxpayers, spouses, dependents, employees, and beneficiaries | Payer, employer, issuer, lender, and financial-institution details |
+| Client SSNs, ITINs, and TINs, including masked values | Issuer and employer EINs |
+| Client street addresses, unit lines, and PO boxes; mortgage property street addresses | City, state, ZIP, and postal codes |
+| Private client identifiers, such as member, payroll, and policy IDs | Account numbers |
+| Personal email addresses, phone numbers, and dates of birth or death | Amounts, tax years, form numbers, OMB numbers, and control numbers |
 
-## Repository map
+Any value shaped like an SSN (`123-45-6789`), including masked forms, is targeted
+regardless of its label. You can add or remove boxes in the review screen to suit
+the document you need to share.
 
-```text
-src/taxhance_pii/       API, storage adapters, redaction pipeline, and GPU worker
-frontend/               Marketing landing page (site root) and React redaction app (/app)
-infra/                  OpenTofu modules for an isolated AWS deployment
-tests/                  Unit and integration tests using synthetic documents only
-scripts/                Deployment and private-corpus evaluation helpers
-docs/                   Threat model, operations, and evaluation protocol
-```
+See the [complete redaction policy](docs/REDACTION_POLICY.md) for the full rules,
+role distinctions, and validation checks.
+
+## How redaction works
+
+1. **Read the page.** Extract text and word positions from the PDF, using OCR for scans.
+2. **Detect client information.** A local language model identifies exact text strings
+   in a layout-preserving representation of each page.
+3. **Place the boxes.** Match those strings to PDF or OCR word positions. The model
+   identifies text; the pipeline calculates the coordinates.
+4. **Check identifiers.** An independent rule catches SSN-shaped values, including
+   partially masked numbers.
+5. **Build a new PDF.** Apply the boxes to rendered page images and export a PDF
+   containing only those images. The original text layers, annotations, and source
+   metadata are not carried into the output.
+
+The pipeline checks the rendered output again for SSN-shaped values. Invalid model
+responses, unreadable pages, or failed identifier checks prevent a job from being
+marked complete.
+
+The default model is `google/gemma-4-E2B-it`, served by vLLM on the deployment's own
+GPU. Document inference does not use a third-party AI API. See the
+[architecture guide](docs/ARCHITECTURE.md) for implementation details.
+
+## Privacy and file retention
+
+- **Processing stays within the deployment.** A local installation stores and processes
+  documents on your server. The AWS deployment uses a dedicated document bucket and
+  GPU worker in the account running the service.
+- **Each job has its own access token.** There are no user accounts or shared job indexes.
+- **Logs exclude document contents.** Application logs use opaque job IDs and counters,
+  without filenames, document text, prompts containing that text, access tokens, or
+  detected personal information.
+- **Downloads trigger deletion.** For a single document, the browser receives the full
+  PDF, starts the local save, and requests deletion of the server copy. It cannot
+  verify that the operating system finished saving the file.
+- **Batch results remain available for review until downloaded.** Server copies are
+  deleted when you download a document individually or in a ZIP, or clear the batch.
+- **Retention is limited to one hour from job creation.** A separate cleanup task
+  removes remaining job data. S3 lifecycle rules and DynamoDB TTL provide additional
+  cleanup safeguards in AWS. The delete action removes inputs, outputs, and previews.
+
+This service has separate code, storage, database, encryption keys, access roles,
+network boundaries, and deployment state from Taxhance AutoKey.
+
+Read the [threat model](docs/THREAT_MODEL.md) and
+[security reporting guide](SECURITY.md) for more detail.
 
 ## Local self-hosting
 
-Larger firms can run the full pipeline on their own servers or in their own cloud
-account. For installation assistance at **$100/hour (USD)**, contact Pujan at
-[pujan@taxhance.com](mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation).
-The software is free under the project license; hardware and hosting are separate.
-See [self-hosting costs and performance](docs/SELF_HOSTING.md) for our AWS reference
-costs and measured page throughput.
-
-Requirements: Docker with Compose and an NVIDIA GPU with the Container Toolkit.
+Run the full pipeline on your own servers or in a cloud account you control.
+You need Docker with Compose, an NVIDIA GPU, and NVIDIA Container Toolkit.
 
 ```bash
+git clone https://github.com/pujan789/pii-redaction.git
+cd pii-redaction
 cp .env.example .env
-# Set PII_TOKEN_PEPPER to a random value.
+```
+
+Edit `.env` and replace `PII_TOKEN_PEPPER` with a secret containing at least
+32 random characters. Then start the services:
+
+```bash
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. If staff will use the app from other computers, set
-`PII_PUBLIC_BASE_URL` and `PII_ALLOWED_ORIGINS` in `.env` to the address they will open
-(for example `http://redaction.office.local:8080`); uploads are sent to that address.
-Every `PII_*` value in `.env` reaches the containers, so the limits and vLLM settings
-documented in `.env.example` can be tuned there. The first worker start downloads the pinned
-`google/gemma-4-E2B-it` revision from Hugging Face (Apache-2.0). Model weights
-are not bundled with this repository; the default revision is pinned to commit
-`3e22461f65e89153144f8adb70e3b8c2cc9845a7` for reproducibility.
+Open [localhost:8080](http://localhost:8080) when the services are ready. The first
+worker start downloads the model weights, which are not bundled with this repository.
 
-To run the benchmark alternate (`Qwen/Qwen3.5-4B`) instead, set these values in
-`.env` before starting Compose — no code change, same pipeline:
+If staff will access the app from other computers, set `PII_PUBLIC_BASE_URL` and
+`PII_ALLOWED_ORIGINS` in `.env` to the address they will open, such as
+`http://redaction.office.local:8080`. Every `PII_*` setting in `.env` is passed to
+the containers; see [the configuration reference](.env.example) for limits, OCR,
+and vLLM settings.
+
+The default Gemma model revision is pinned to
+`3e22461f65e89153144f8adb70e3b8c2cc9845a7` for reproducibility. To use the benchmark
+alternative, set the following values in `.env` before starting Compose:
 
 ```dotenv
 PII_MODEL_ID=Qwen/Qwen3.5-4B
 PII_MODEL_REVISION=<pin the exact commit sha>
 ```
+
+See [self-hosting costs and performance](docs/SELF_HOSTING.md) for the AWS reference
+configuration, measured throughput, and infrastructure cost examples.
+
+### Installation help
+
+I'm Pujan, the developer behind this project. I offer installation help on your
+firm's servers or cloud account at **$100/hour (USD)**. Email me at
+[pujan@taxhance.com](mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation)
+with your setup and expected document volume.
+
+The software is free under the [project license](LICENSE); hardware and hosting
+costs are separate. You can find more of my work at [taxhance.com](https://taxhance.com).
+
+## Development
 
 For CPU-only API development:
 
@@ -128,38 +179,53 @@ uv sync --extra worker --extra dev
 uv run uvicorn taxhance_pii.api.main:app --reload
 ```
 
+This starts the API. Running the full detection pipeline also requires the GPU worker.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and contribution guidelines. Use
+synthetic documents in tests and bug reports; never include real taxpayer information.
+
 ## AWS deployment
 
-The AWS design uses CloudFront/WAF, a static S3 web origin, API Gateway + Lambda,
-DynamoDB, SQS, a dedicated encrypted document bucket, and one GPU EC2 worker. See
-`docs/OPERATIONS.md` before applying `infra/`.
+The [OpenTofu configuration](infra/) provisions CloudFront/WAF, a static S3 web
+origin, API Gateway and Lambda, DynamoDB, SQS, an encrypted document bucket, and a
+GPU EC2 worker.
 
-Infrastructure is reproducible with OpenTofu. Do not run the application as the AWS
-root principal; root is used only to bootstrap a scoped deployment role.
+Start with the [operations guide](docs/OPERATIONS.md) for deployment roles, GPU
+quotas, capacity settings, cleanup, and evaluation procedures. The reference worker
+uses `g6.xlarge` with an NVIDIA L4, with `g5.xlarge` and an NVIDIA A10G as a capacity
+fallback. Both have 24 GB of GPU memory.
 
-The deployed worker prefers `g6.xlarge` with one 24 GB NVIDIA L4 and can use
-`g5.xlarge` with one 24 GB NVIDIA A10G when regional capacity requires it. The API,
-queue, database, storage, and static frontend are deliberately serverless and
-usage-based. Pricing and taxes can change, so verify the AWS Price List before each
-deployment. AWS must approve at least four vCPUs for the "Running On-Demand G and VT
-instances" quota before the worker can launch.
+## Documentation
 
-The deployment helper accepts independent `-GpuCapacityDesiredCount` and
-`-WorkerDesiredCount` switches. Set both to `0` to keep the public application deployed
-without launching a GPU. For private evaluation, use GPU capacity `1` and production
-workers `0`, giving the standalone evaluation task exclusive use of the GPU.
-An explicitly authorized model comparison may temporarily set GPU capacity to `2` while
-production workers remain `0`; the Auto Scaling group has a hard maximum of two.
+| Guide | What it covers |
+| --- | --- |
+| [Redaction policy](docs/REDACTION_POLICY.md) | What automatic detection removes and preserves |
+| [Self-hosting](docs/SELF_HOSTING.md) | Hardware, reference costs, and measured performance |
+| [Architecture](docs/ARCHITECTURE.md) | API, storage, detection, and rendering design |
+| [Operations](docs/OPERATIONS.md) | AWS deployment and maintenance |
+| [Threat model](docs/THREAT_MODEL.md) | Privacy boundaries, risks, and safeguards |
+| [Evaluation](docs/EVALUATION.md) | How redaction quality is measured |
+| [Security](SECURITY.md) | How to report a vulnerability |
+| [Contributing](CONTRIBUTING.md) | Development checks and test data requirements |
+
+### Repository map
+
+| Directory | Contents |
+| --- | --- |
+| [`src/taxhance_pii/`](src/taxhance_pii/) | API, storage adapters, redaction pipeline, and GPU worker |
+| [`frontend/`](frontend/) | Landing page and React redaction app |
+| [`infra/`](infra/) | OpenTofu modules for AWS deployment |
+| [`tests/`](tests/) | Unit and integration tests with synthetic documents |
+| [`scripts/`](scripts/) | Deployment and private evaluation helpers |
+| [`docs/`](docs/) | Design, operations, and evaluation guides |
 
 ## License
 
-This project is licensed under the GNU Affero General Public License, version 3
+Licensed under the [GNU Affero General Public License v3.0](LICENSE)
 (`AGPL-3.0-only`), with the
-[Taxhance Noncommercial Private-Use Exception](LICENSE-EXCEPTION.md). You may inspect,
-modify, and self-host it. Private noncommercial modifications can remain private.
-Commercial network deployments do not receive that exception and must prominently
-offer users the complete Corresponding Source of the deployed version under the AGPL.
+[Taxhance Noncommercial Private-Use Exception](LICENSE-EXCEPTION.md).
 
-See [`LICENSE`](LICENSE) and [`LICENSE-EXCEPTION.md`](LICENSE-EXCEPTION.md) for the
-controlling terms. This is a practical project description, not legal advice; have
-counsel review the exception before relying on it commercially.
+The exception allows private noncommercial modifications to remain private.
+Commercial users do not receive this exception; commercial network deployments
+of modified versions must offer users the complete corresponding source as required
+by the AGPL. See the linked license files for the full terms. Model weights are
+distributed separately under their own licenses.

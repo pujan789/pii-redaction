@@ -20,7 +20,7 @@ Lambda ──> DynamoDB + SQS                                  │
                               └── pinned local text LLM (vLLM) + OCR + deterministic renderer
 ```
 
-No TaxHance Autokey database, storage account, queue, key, role, network, deployment
+No Taxhance AutoKey database, storage account, queue, key, role, network, deployment
 state, or application code is imported. Sharing the same AWS payer/account does not
 grant either application access to the other.
 

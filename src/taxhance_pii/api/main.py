@@ -30,7 +30,7 @@ configure_logging(container.settings.log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="TaxHance PII Redaction API",
+    title="Taxhance PII Redaction API",
     version="0.1.0",
     docs_url=None if container.settings.runtime == "aws" else "/docs",
     redoc_url=None,

@@ -5,8 +5,8 @@ control. The pipeline is open source; the [project license](../LICENSE) and
 [noncommercial private-use exception](../LICENSE-EXCEPTION.md) apply. Model weights
 have separate terms. Start with the [Docker Compose instructions](../README.md#local-self-hosting).
 
-For larger firms that want help, Pujan can install the system on their own servers
-at **$100/hour (USD)**. Email [pujan@taxhance.com](mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation)
+I offer installation help on your firm's servers or cloud account
+at **$100/hour (USD)**. Email me at [pujan@taxhance.com](mailto:pujan@taxhance.com?subject=PII%20Redaction%20self-hosting%20installation)
 with your server or cloud setup and expected document volume. Installation is billed
 for time; infrastructure costs are separate.
 
