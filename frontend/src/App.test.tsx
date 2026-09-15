@@ -740,6 +740,7 @@ describe("PII redaction desk", () => {
     fireEvent.click(screen.getByRole("button", { name: /no redactions 2/i }));
     expect(screen.getByText("alpha.pdf")).toBeVisible();
 
+    fireEvent.click(screen.getByRole("checkbox", { name: "Name PDFs after the originals" }));
     fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
     await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
     const [entries, index] = zipMocks.createBatchZip.mock.calls[0];
@@ -752,13 +753,13 @@ describe("PII redaction desk", () => {
     expect(index.content).toContain("redacted-01-of-02.pdf");
   });
 
-  it("can name batch downloads after the originals on request", async () => {
+  it("names batch downloads after the originals by default", async () => {
     render(<App />);
     const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
     await screen.findByRole("button", { name: /download all 2 PDFs/i });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /name pdfs after the originals/i }));
+    expect(screen.getByRole("checkbox", { name: "Name PDFs after the originals" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
     await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
     expect(zipMocks.createBatchZip.mock.calls[0][0].map((entry: { filename: string }) => entry.filename)).toEqual([

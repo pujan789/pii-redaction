@@ -43,7 +43,7 @@ export default function BatchWorkspace({
   const [downloaded, setDownloaded] = useState<Set<number>>(new Set());
   const [preview, setPreview] = useState<BatchItem | null>(null);
   const [reviewing, setReviewing] = useState<number | null>(null);
-  const [originalNames, setOriginalNames] = useState(false);
+  const [originalNames, setOriginalNames] = useState(true);
   const actionInFlight = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
   const ready = items.filter((item) => item.status === "ready");
@@ -464,7 +464,7 @@ export default function BatchWorkspace({
               checked={originalNames}
               onChange={(event) => setOriginalNames(event.target.checked)}
             />
-            Name PDFs after the originals (those names then appear in your download history)
+            Name PDFs after the originals
           </label>
         </div>
         <button

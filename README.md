@@ -50,7 +50,8 @@ upload are held in that tab; refreshing loses those local copies. In-flight serv
 jobs can be recovered from tab-scoped access tokens. Filenames and document contents
 are not saved in browser storage.
 
-ZIP downloads use neutral numbered filenames matching the document table and must
+Batch PDFs use the original names with `-redacted` added by default. Turn off
+**Name PDFs after the originals** to use numbered filenames. ZIP downloads must
 total less than 4 GB. Individual downloads remain available. Default limits are
 100 documents per hour and five active jobs per network; self-hosted installations
 can adjust these in [`.env.example`](.env.example).
