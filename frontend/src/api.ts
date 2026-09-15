@@ -80,10 +80,11 @@ export async function submitJob(credentials: JobCredentials): Promise<Job> {
   return (await response.json()) as Job;
 }
 
-export async function getJob(credentials: JobCredentials): Promise<Job> {
+export async function getJob(credentials: JobCredentials, signal?: AbortSignal): Promise<Job> {
   const response = await checked(
     await fetch(`${API_BASE}/v1/jobs/${credentials.jobId}`, {
       headers: headers(credentials),
+      signal,
       cache: "no-store",
     }),
   );
@@ -128,19 +129,22 @@ async function blobFor(
   credentials: JobCredentials,
   resourcePath: string,
   accessPath: string,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   const access = await checked(
     await fetch(`${API_BASE}${accessPath}`, {
       headers: headers(credentials),
+      signal,
       cache: "no-store",
     }),
   );
   const { direct_url: directUrl } = (await access.json()) as { direct_url: string | null };
-  if (directUrl) return (await checked(await fetch(directUrl, { cache: "no-store" }))).blob();
+  if (directUrl) return (await checked(await fetch(directUrl, { cache: "no-store", signal }))).blob();
   return (
     await checked(
       await fetch(`${API_BASE}${resourcePath}`, {
         headers: headers(credentials),
+        signal,
         cache: "no-store",
       }),
     )
@@ -152,7 +156,7 @@ export function getPageBlob(credentials: JobCredentials, pageIndex: number): Pro
   return blobFor(credentials, base, `${base}/access`);
 }
 
-export function getResultBlob(credentials: JobCredentials): Promise<Blob> {
+export function getResultBlob(credentials: JobCredentials, signal?: AbortSignal): Promise<Blob> {
   const base = `/v1/jobs/${credentials.jobId}/result`;
-  return blobFor(credentials, base, `${base}/access`);
+  return blobFor(credentials, base, `${base}/access`, signal);
 }

@@ -217,16 +217,19 @@ class WorkerPipeline:
             raise JobCancelled("job_inactive")
 
     def fail(self, job_id: str, error: Exception) -> None:
+        current = self.repository.get(job_id)
+        if current is None or current.status in {JobStatus.DELETED, JobStatus.EXPIRED}:
+            # A preview or output may land after deletion but before the next
+            # active-state check. Remove it even when that check cancelled work.
+            self.blobs.delete_prefix(f"jobs/{job_id}")
+            return
         if isinstance(error, JobCancelled):
+            # A live job may have changed owners; preserve its files and state.
             return
         if isinstance(error, (DocumentError, DetectorError, RedactionValidationError)):
             code = str(error)
         else:
             code = "processing_failed"
-        current = self.repository.get(job_id)
-        if current is None or current.status in {JobStatus.DELETED, JobStatus.EXPIRED}:
-            self.blobs.delete_prefix(f"jobs/{job_id}")
-            return
         if current.status == JobStatus.COMPLETE:
             return
         if (

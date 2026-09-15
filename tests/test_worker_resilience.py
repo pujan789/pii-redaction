@@ -8,9 +8,17 @@ import pytest
 from pytest import MonkeyPatch
 
 from taxhance_pii.config import Settings
-from taxhance_pii.domain import JobRecord, JobStatus, QueueMessage, TaskType, utc_now
+from taxhance_pii.domain import (
+    CreateJobRequest,
+    JobRecord,
+    JobStatus,
+    QueueMessage,
+    TaskType,
+    utc_now,
+)
 from taxhance_pii.redaction.renderer import RedactionValidationError
 from taxhance_pii.repository import DynamoJobRepository, JobRepository, SQLiteJobRepository
+from taxhance_pii.service import JobService
 from taxhance_pii.storage import LocalBlobStore
 from taxhance_pii.task_queue import LocalTaskQueue, ReceivedMessage, SqsTaskQueue
 from taxhance_pii.worker import main as worker_main
@@ -152,6 +160,83 @@ def test_worker_failure_after_delete_removes_raced_blobs(tmp_path: Path) -> None
     pipeline.fail(job.job_id, RuntimeError("late failure"))
 
     assert not (tmp_path / "blobs" / "jobs" / job.job_id).exists()
+
+
+@pytest.mark.parametrize("expire_before_write", [False, True])
+def test_cancelled_worker_removes_preview_written_after_delete_or_expiry(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    sample_jpeg: bytes,
+    expire_before_write: bool,
+) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    pipeline = _pipeline(tmp_path, repository)
+    pipeline.settings.ocr_enabled = False
+    service = JobService(pipeline.settings, repository, pipeline.blobs, pipeline.queue)
+    created = service.create_job(
+        CreateJobRequest(
+            filename="synthetic.jpg",
+            size_bytes=len(sample_jpeg),
+            content_type="image/jpeg",
+            auto_finalize=True,
+        ),
+        "192.0.2.1",
+    )
+    job = repository.get(created.job_id)
+    assert job is not None
+    pipeline.blobs.put_bytes(job.input_key, sample_jpeg, "image/jpeg")
+    service.submit(created.job_id, created.access_token)
+    original_put = pipeline.blobs.put_bytes
+    raced_previews: list[str] = []
+
+    def put_after_delete(key: str, data: bytes, content_type: str) -> None:
+        if "/previews/" in key and not raced_previews:
+            raced_previews.append(key)
+            # The worker has checked that this job is active. Deletion (and
+            # optionally expiry cleanup) wins before the preview write lands.
+            service.delete(created.job_id, created.access_token)
+            if expire_before_write:
+                assert service.cleanup_expired() == 1
+        original_put(key, data, content_type)
+
+    monkeypatch.setattr(pipeline.blobs, "put_bytes", put_after_delete)
+    monkeypatch.setattr(
+        worker_main,
+        "get_container",
+        lambda: SimpleNamespace(settings=pipeline.settings, repository=repository),
+    )
+
+    assert worker_main.run_once(pipeline) is True
+
+    assert len(raced_previews) == 1
+    assert pipeline.blobs.head(raced_previews[0]) is None
+    assert not (tmp_path / "blobs" / "jobs" / created.job_id).exists()
+    deleted = repository.get(created.job_id)
+    assert deleted is not None
+    assert deleted.status == (JobStatus.EXPIRED if expire_before_write else JobStatus.DELETED)
+    if expire_before_write:
+        # Expired rows no longer qualify for cleanup; the worker must remove
+        # the late write itself rather than relying on another cleanup pass.
+        assert service.cleanup_expired() == 0
+
+
+@pytest.mark.parametrize(
+    "status",
+    [JobStatus.DETECTING, JobStatus.REDACTING, JobStatus.REVIEW_REQUIRED, JobStatus.COMPLETE],
+)
+def test_worker_cancellation_preserves_a_live_jobs_state_and_files(
+    tmp_path: Path, status: JobStatus
+) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    pipeline = _pipeline(tmp_path, repository)
+    job = _job("live-owner", status)
+    repository.create(job)
+    pipeline.blobs.put_bytes(job.output_key, b"synthetic-pdf", "application/pdf")
+
+    pipeline.fail(job.job_id, JobCancelled("job_state_changed"))
+
+    assert repository.get(job.job_id) == job
+    assert pipeline.blobs.get_bytes(job.output_key) == b"synthetic-pdf"
 
 
 def test_sqs_renew_uses_full_visibility_timeout() -> None:

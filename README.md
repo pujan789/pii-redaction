@@ -45,6 +45,10 @@ The browser processes two documents at a time and shows progress, previews, and 
 options in one table. Failed files stay visible for retry and are excluded from downloads.
 Capacity limits pause the waiting queue.
 
+Use **Clear batch** to stop collecting results and start again, even while documents
+are processing. Any upload already in progress finishes before its server copy is
+deleted. Clearing requires confirmation when files or unsaved results remain.
+
 Keep the tab open until your downloads finish. Completed PDFs and files waiting to
 upload are held in that tab; refreshing loses those local copies. In-flight server
 jobs can be recovered from tab-scoped access tokens. Filenames and document contents

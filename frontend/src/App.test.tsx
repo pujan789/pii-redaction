@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "./api";
 import App from "./App";
+import { BATCH_SESSION_KEY } from "./batch";
 import { SUPPORTED_FILE_ACCEPT } from "./fileSelection";
 import type { CreatedJob, Job } from "./types";
 
@@ -76,6 +77,30 @@ function renderManualDesk() {
 }
 
 describe("PII redaction desk", () => {
+  it("can clear a restored automatic batch with active server jobs and lost local files", async () => {
+    sessionStorage.setItem(BATCH_SESSION_KEY, JSON.stringify([
+      { position: 1, credentials: { jobId: "first", token: "token" } },
+      { position: 2, credentials: { jobId: "second", token: "token" } },
+      ...Array.from({ length: 12 }, (_, index) => ({ position: index + 3 })),
+    ]));
+    apiMocks.getJob.mockImplementation(async ({ jobId }: { jobId: string }) => ({
+      ...completeJob(jobId), status: "queued_detection",
+    }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValue(true);
+    render(<App />);
+    await waitFor(() => expect(apiMocks.getJob).toHaveBeenCalledTimes(2));
+    const clear = screen.getByRole("button", { name: "Clear batch" });
+    expect(clear).toBeEnabled();
+    fireEvent.click(clear);
+    expect(apiMocks.deleteJob).not.toHaveBeenCalled();
+    fireEvent.click(clear);
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("radio", { name: /review each document/i })).toBeInTheDocument());
+    expect(sessionStorage.getItem(BATCH_SESSION_KEY)).toBeNull();
+    expect(apiMocks.createJob).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();

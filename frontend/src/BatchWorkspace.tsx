@@ -33,7 +33,7 @@ export default function BatchWorkspace({
   queue: BatchQueue;
   onClose: () => void;
 }) {
-  const { items, paused, pauseReason } = useSyncExternalStore(
+  const { items, paused, pauseReason, cancelled } = useSyncExternalStore(
     queue.subscribe,
     queue.getSnapshot,
   );
@@ -145,12 +145,12 @@ export default function BatchWorkspace({
   }
 
   async function cleanup(close: boolean) {
-    if (activeCount || actionInFlight.current) return;
+    if ((!close && activeCount) || actionInFlight.current) return;
     if (
       close &&
-      (unsaved || waiting.length > 0) &&
+      (unsaved || waiting.length > 0 || activeCount > 0) &&
       !window.confirm(
-        "Clear this batch? Unsaved PDFs and waiting files will be removed from this tab, and the remaining server copies deleted.",
+        "Clear this batch? Uploads and result collection will stop. Files and unsaved PDFs will be removed from this tab, and the remaining server copies deleted.",
       )
     )
       return;
@@ -202,7 +202,7 @@ export default function BatchWorkspace({
           </p>
         </div>
         <div className="batch-heading-actions">
-          {!settled && (
+          {!settled && !cancelled && (
             <button
               className="button button-secondary"
               type="button"
@@ -215,7 +215,7 @@ export default function BatchWorkspace({
           <button
             className="button button-secondary"
             type="button"
-            disabled={Boolean(busy) || activeCount > 0}
+            disabled={Boolean(busy)}
             onClick={() => void cleanup(true)}
           >
             {settled ? "Start a new batch" : "Clear batch"}
@@ -316,7 +316,7 @@ export default function BatchWorkspace({
               </button>
             ))}
           </div>
-          {failed.some((item) => item.file || item.credentials) && (
+          {!cancelled && failed.some((item) => item.file || item.credentials) && (
             <button
               type="button"
               className="button button-secondary"
@@ -408,7 +408,7 @@ export default function BatchWorkspace({
                           </button>
                         </>
                       )}
-                      {item.status === "failed" &&
+                      {!cancelled && item.status === "failed" &&
                         (item.file || item.credentials) && (
                           <button
                             type="button"
