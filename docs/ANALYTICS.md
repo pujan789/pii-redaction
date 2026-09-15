@@ -78,6 +78,8 @@ The completion flag is a separate DynamoDB attribute so the shared job payload
 remains readable by older workers and API versions during deployment or rollback.
 An older writer can discard that flag, so rebuilding a document across a mixed
 deployment can count it again. This affects aggregate accuracy, not processing.
+SQLite omits the analytics-only flag entirely, preserving its legacy payload
+format for self-hosted upgrades and rollbacks. Local analytics is unsupported.
 
 After deployment, use an authorized AWS identity to provision the owner's account:
 

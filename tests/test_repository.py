@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from legacy_job_record import LegacyJobRecord
 
 from taxhance_pii.domain import JobRecord, JobStatus, utc_now
 from taxhance_pii.repository import DynamoJobRepository, SQLiteJobRepository, StateConflict
@@ -43,6 +46,42 @@ def test_sqlite_state_transition_and_claim(tmp_path: Path) -> None:
     assert claimed is not None
     assert claimed.status == JobStatus.DETECTING
     assert repository.claim_local_task() is None
+
+
+@pytest.mark.parametrize("completed_once", [False, True])
+def test_sqlite_writes_remain_readable_by_the_previous_release(
+    tmp_path: Path, completed_once: bool
+) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    repository = SQLiteJobRepository(database)
+
+    def legacy_read() -> LegacyJobRecord:
+        with closing(sqlite3.connect(database)) as connection:
+            payload = connection.execute(
+                "SELECT payload FROM jobs WHERE job_id = ?", ("job-1",)
+            ).fetchone()[0]
+        return LegacyJobRecord.model_validate_json(payload)
+
+    repository.create(_job().model_copy(update={"completed_once": completed_once}))
+    assert legacy_read().status == JobStatus.AWAITING_UPLOAD
+    repository.update("job-1", None, status=JobStatus.QUEUED_DETECTION)
+    assert legacy_read().status == JobStatus.QUEUED_DETECTION
+    assert repository.claim_local_task() is not None
+    assert legacy_read().status == JobStatus.DETECTING
+    assert repository.requeue_in_flight() == 1
+    assert legacy_read().status == JobStatus.QUEUED_DETECTION
+    repository.update(
+        "job-1",
+        None,
+        status=JobStatus.COMPLETE,
+        completed_once=True,
+        expires_at=utc_now() - timedelta(minutes=1),
+    )
+    assert legacy_read().status == JobStatus.COMPLETE
+    # Expiry reads and subsequent updates must also accept the legacy payload.
+    assert [job.job_id for job in repository.list_expired(utc_now())] == ["job-1"]
+    repository.update("job-1", None, status=JobStatus.EXPIRED)
+    assert legacy_read().status == JobStatus.EXPIRED
 
 
 def test_sqlite_rejects_invalid_transition(tmp_path: Path) -> None:

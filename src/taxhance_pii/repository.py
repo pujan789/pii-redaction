@@ -51,7 +51,9 @@ def _epoch(value: datetime) -> int:
 
 
 def _serialize(job: JobRecord) -> str:
-    return job.model_dump_json()
+    # Local analytics is unsupported. Keep SQLite payloads readable by older
+    # API/worker versions; only DynamoDB persists this AWS analytics marker.
+    return job.model_dump_json(exclude={"completed_once"})
 
 
 def _deserialize(payload: str) -> JobRecord:

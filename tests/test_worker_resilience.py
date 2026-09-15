@@ -10,7 +10,7 @@ from pytest import MonkeyPatch
 from taxhance_pii.config import Settings
 from taxhance_pii.domain import JobRecord, JobStatus, QueueMessage, TaskType, utc_now
 from taxhance_pii.redaction.renderer import RedactionValidationError
-from taxhance_pii.repository import SQLiteJobRepository
+from taxhance_pii.repository import DynamoJobRepository, JobRepository, SQLiteJobRepository
 from taxhance_pii.storage import LocalBlobStore
 from taxhance_pii.task_queue import LocalTaskQueue, ReceivedMessage, SqsTaskQueue
 from taxhance_pii.worker import main as worker_main
@@ -94,7 +94,24 @@ def test_analytics_counts_a_completed_document_once_after_rebuild(
 
     from taxhance_pii.worker import pipeline as pipeline_module
 
-    repository = SQLiteJobRepository(tmp_path / "jobs.db")
+    # Exercise the deployed repository: only AWS persists analytics markers.
+    items: dict[str, dict[str, object]] = {}
+    table = Mock()
+
+    def put_item(**request: object) -> None:
+        item = request["Item"]
+        assert isinstance(item, dict)
+        items[item["job_id"]] = item
+
+    def get_item(**request: object) -> dict[str, object]:
+        key = request["Key"]
+        assert isinstance(key, dict)
+        return {"Item": items[key["job_id"]]}
+
+    table.put_item.side_effect = put_item
+    table.get_item.side_effect = get_item
+    repository = object.__new__(DynamoJobRepository)
+    repository.table = table
     first = _job("synthetic-analytics", JobStatus.REDACTING)
     repository.create(first)
     pipeline = _pipeline(tmp_path, repository)
@@ -108,7 +125,7 @@ def test_analytics_counts_a_completed_document_once_after_rebuild(
     assert emit.call_count == 1
 
 
-def _pipeline(tmp_path: Path, repository: SQLiteJobRepository) -> WorkerPipeline:
+def _pipeline(tmp_path: Path, repository: JobRepository) -> WorkerPipeline:
     return WorkerPipeline(
         Settings(data_dir=tmp_path),
         repository,
