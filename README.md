@@ -45,12 +45,17 @@ The browser processes two documents at a time and shows progress, previews, and 
 options in one table. Failed files stay visible for retry and are excluded from downloads.
 Capacity limits pause the waiting queue.
 
+Use **Clear batch** to stop collecting results and start again, even while documents
+are processing. Any upload already in progress finishes before its server copy is
+deleted. Clearing requires confirmation when files or unsaved results remain.
+
 Keep the tab open until your downloads finish. Completed PDFs and files waiting to
 upload are held in that tab; refreshing loses those local copies. In-flight server
 jobs can be recovered from tab-scoped access tokens. Filenames and document contents
 are not saved in browser storage.
 
-ZIP downloads use neutral numbered filenames matching the document table and must
+Batch PDFs use the original names with `-redacted` added by default. Turn off
+**Name PDFs after the originals** to use numbered filenames. ZIP downloads must
 total less than 4 GB. Individual downloads remain available. Default limits are
 100 documents per hour and five active jobs per network; self-hosted installations
 can adjust these in [`.env.example`](.env.example).
@@ -102,7 +107,8 @@ GPU. Document inference does not use a third-party AI API. See the
 - **Processing stays within the deployment.** A local installation stores and processes
   documents on your server. The AWS deployment uses a dedicated document bucket and
   GPU worker in the account running the service.
-- **Each job has its own access token.** There are no user accounts or shared job indexes.
+- **Each job has its own access token.** Redacting documents requires no account,
+  and there is no shared job index.
 - **Logs exclude document contents.** Application logs use opaque job IDs and counters,
   without filenames, document text, prompts containing that text, access tokens, or
   detected personal information.
@@ -114,6 +120,10 @@ GPU. Document inference does not use a third-party AI API. See the
 - **Retention is limited to one hour from job creation.** A separate cleanup task
   removes remaining job data. S3 lifecycle rules and DynamoDB TTL provide additional
   cleanup safeguards in AWS. The delete action removes inputs, outputs, and previews.
+- **Usage analytics contain aggregate counts.** These cover visits, page views,
+  document activity, batch sizes, and processing time. They contain no raw IPs,
+  filenames, document contents, or traffic sources. Analytics access is restricted
+  to a separate owner account. See the [analytics data policy](docs/ANALYTICS.md).
 
 This service has separate code, storage, database, encryption keys, access roles,
 network boundaries, and deployment state from Taxhance AutoKey.

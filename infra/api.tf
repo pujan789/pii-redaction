@@ -32,6 +32,12 @@ locals {
     PII_MAX_QUEUE_DEPTH                  = "500"
     PII_MODEL_ID                         = var.model_id
     PII_MODEL_REVISION                   = var.model_revision
+    PII_ANALYTICS_ENABLED                = "true"
+    PII_ANALYTICS_DEPLOYMENT             = local.prefix
+    PII_ANALYTICS_USER_POOL_ID           = var.deploy_application ? aws_cognito_user_pool.analytics[0].id : ""
+    PII_ANALYTICS_CLIENT_ID              = var.deploy_application ? aws_cognito_user_pool_client.analytics[0].id : ""
+    PII_ANALYTICS_LOGIN_DOMAIN           = var.deploy_application ? "https://${aws_cognito_user_pool_domain.analytics[0].domain}.auth.${var.aws_region}.amazoncognito.com" : ""
+    PII_ANALYTICS_CALLBACK_URL           = var.analytics_owner_url
   }
 }
 
@@ -95,7 +101,7 @@ resource "aws_apigatewayv2_api" "api" {
 
   cors_configuration {
     allow_credentials = false
-    allow_headers     = ["Content-Type", "X-Job-Token"]
+    allow_headers     = ["Content-Type", "X-Job-Token", "Authorization"]
     allow_methods     = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_origins     = var.allowed_origins
     expose_headers    = ["Content-Length", "Content-Type"]
@@ -131,6 +137,15 @@ resource "aws_apigatewayv2_stage" "default" {
   default_route_settings {
     throttling_burst_limit = 60
     throttling_rate_limit  = 30
+  }
+
+  dynamic "route_settings" {
+    for_each = aws_apigatewayv2_route.analytics_collect
+    content {
+      route_key              = route_settings.value.route_key
+      throttling_burst_limit = 20
+      throttling_rate_limit  = 10
+    }
   }
 }
 

@@ -138,6 +138,7 @@ class JobRecord(BaseModel):
     finding_count: int = Field(default=0, ge=0)
     error_code: str | None = Field(default=None, max_length=80)
     auto_finalize: bool = False
+    completed_once: bool = False
     version: int = Field(default=1, ge=1)
 
 

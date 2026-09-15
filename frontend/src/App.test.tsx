@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "./api";
 import App from "./App";
+import { BATCH_SESSION_KEY } from "./batch";
 import { SUPPORTED_FILE_ACCEPT } from "./fileSelection";
 import type { CreatedJob, Job } from "./types";
 
@@ -76,6 +77,30 @@ function renderManualDesk() {
 }
 
 describe("PII redaction desk", () => {
+  it("can clear a restored automatic batch with active server jobs and lost local files", async () => {
+    sessionStorage.setItem(BATCH_SESSION_KEY, JSON.stringify([
+      { position: 1, credentials: { jobId: "first", token: "token" } },
+      { position: 2, credentials: { jobId: "second", token: "token" } },
+      ...Array.from({ length: 12 }, (_, index) => ({ position: index + 3 })),
+    ]));
+    apiMocks.getJob.mockImplementation(async ({ jobId }: { jobId: string }) => ({
+      ...completeJob(jobId), status: "queued_detection",
+    }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValue(true);
+    render(<App />);
+    await waitFor(() => expect(apiMocks.getJob).toHaveBeenCalledTimes(2));
+    const clear = screen.getByRole("button", { name: "Clear batch" });
+    expect(clear).toBeEnabled();
+    fireEvent.click(clear);
+    expect(apiMocks.deleteJob).not.toHaveBeenCalled();
+    fireEvent.click(clear);
+    await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("radio", { name: /review each document/i })).toBeInTheDocument());
+    expect(sessionStorage.getItem(BATCH_SESSION_KEY)).toBeNull();
+    expect(apiMocks.createJob).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -136,7 +161,7 @@ describe("PII redaction desk", () => {
     expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByRole("heading", { name: /your documents are ready/i })).toHaveFocus();
     fireEvent.click(download);
-    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip"));
+    await waitFor(() => expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(expect.any(Blob), expect.any(Function), "redacted-documents.zip", 50));
     expect(zipMocks.createBatchZip.mock.calls[0][0]).toHaveLength(50);
     await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(50));
     expect(screen.getByText(/download started/i)).toBeVisible();
@@ -740,6 +765,7 @@ describe("PII redaction desk", () => {
     fireEvent.click(screen.getByRole("button", { name: /no redactions 2/i }));
     expect(screen.getByText("alpha.pdf")).toBeVisible();
 
+    fireEvent.click(screen.getByRole("checkbox", { name: "Name PDFs after the originals" }));
     fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
     await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
     const [entries, index] = zipMocks.createBatchZip.mock.calls[0];
@@ -752,13 +778,13 @@ describe("PII redaction desk", () => {
     expect(index.content).toContain("redacted-01-of-02.pdf");
   });
 
-  it("can name batch downloads after the originals on request", async () => {
+  it("names batch downloads after the originals by default", async () => {
     render(<App />);
     const files = ["alpha", "beta"].map((name) => new File(["x"], `${name}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
     await screen.findByRole("button", { name: /download all 2 PDFs/i });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /name pdfs after the originals/i }));
+    expect(screen.getByRole("checkbox", { name: "Name PDFs after the originals" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /download all 2 PDFs/i }));
     await waitFor(() => expect(zipMocks.createBatchZip).toHaveBeenCalled());
     expect(zipMocks.createBatchZip.mock.calls[0][0].map((entry: { filename: string }) => entry.filename)).toEqual([

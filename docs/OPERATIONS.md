@@ -171,3 +171,8 @@ variable.
 
 Document data is deliberately not backed up, replicated, or versioned. Source code and
 infrastructure state are backed up; customer documents are not.
+
+## Private usage analytics
+
+See [ANALYTICS.md](ANALYTICS.md) for the collected metrics, owner provisioning,
+retention, and access checks. There is no public link to the owner console.

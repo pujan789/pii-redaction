@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "./api";
 import { BATCH_SESSION_KEY, BatchQueue, readBatchSession } from "./batch";
-import type { Job } from "./types";
+import type { CreatedJob, Job } from "./types";
 
 const api = vi.hoisted(() => ({
   createJob: vi.fn(),
@@ -322,6 +322,96 @@ describe("automatic batch processing", () => {
       label: "Document 1",
     });
     expect(api.createJob).not.toHaveBeenCalled();
+  });
+
+  it("clears restored jobs during polling without resurrecting the closed session", async () => {
+    vi.useFakeTimers();
+    api.getJob.mockImplementation(async ({ jobId }: { jobId: string }) => ({
+      ...complete(jobId), status: "queued_detection",
+    }));
+    const queue = new BatchQueue([], [
+      { position: 1, credentials: { jobId: "first", token: "token" } },
+      { position: 2, credentials: { jobId: "second", token: "token" } },
+      { position: 3 },
+    ]);
+    queue.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.getJob).toHaveBeenCalledTimes(2);
+    await queue.cleanup(true);
+    sessionStorage.removeItem(BATCH_SESSION_KEY);
+    queue.resume();
+    queue.retry();
+    queue.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(api.deleteJob).toHaveBeenCalledTimes(2);
+    expect(api.getJob).toHaveBeenCalledTimes(2);
+    expect(api.createJob).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(BATCH_SESSION_KEY)).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["status", "result"])("aborts an in-flight %s request before clearing", async (stage) => {
+    const pending = (_value: unknown, signal: AbortSignal) => {
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+    const mock = stage === "status" ? api.getJob : api.getResultBlob;
+    mock.mockImplementation(pending);
+    const queue = stage === "status"
+      ? new BatchQueue([], [{ position: 1, credentials: { jobId: "existing", token: "token" } }])
+      : new BatchQueue(files(1));
+    queue.start();
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(1));
+    await queue.cleanup(true);
+    expect(api.deleteJob).toHaveBeenCalledTimes(1);
+    expect(queue.getSnapshot().items[0]).toMatchObject({ status: "failed", credentials: undefined });
+  });
+
+  it("waits for an in-flight upload to settle before deleting its server copy", async () => {
+    let finishUpload!: () => void;
+    api.uploadFile.mockImplementationOnce(() => new Promise<void>((resolve) => { finishUpload = resolve; }));
+    const queue = new BatchQueue(files(1));
+    queue.start();
+    await waitFor(() => expect(api.uploadFile).toHaveBeenCalledTimes(1));
+    const cleanup = queue.cleanup(true);
+    await Promise.resolve();
+    expect(api.deleteJob).not.toHaveBeenCalled();
+    finishUpload();
+    await cleanup;
+    expect(api.deleteJob).toHaveBeenCalledTimes(1);
+    expect(api.submitJob).not.toHaveBeenCalled();
+    expect(queue.getSnapshot().items[0].credentials).toBeUndefined();
+  });
+
+  it("cleans up a job created just as cancellation started without uploading waiting files", async () => {
+    let finish!: (created: Partial<CreatedJob>) => void;
+    api.createJob.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const queue = new BatchQueue(files(3));
+    queue.start();
+    queue.pause();
+    await waitFor(() => expect(queue.getSnapshot().items[1].status).toBe("ready"));
+    const cleanup = queue.cleanup(true);
+    finish({ job_id: "late-created", access_token: "token", upload: {} as CreatedJob["upload"] });
+    await cleanup;
+    expect(api.deleteJob).toHaveBeenCalledWith({ jobId: "late-created", token: "token" });
+    expect(api.createJob).toHaveBeenCalledTimes(2);
+    expect(api.uploadFile).not.toHaveBeenCalledWith(expect.objectContaining({ job_id: "late-created" }), expect.anything());
+    expect(queue.getSnapshot().items.every((item) => !item.credentials)).toBe(true);
+  });
+
+  it("retains credentials when cancellation cleanup fails and allows another cleanup", async () => {
+    const queue = new BatchQueue(files(1));
+    queue.start();
+    await waitFor(() => expect(queue.getSnapshot().items[0].status).toBe("ready"));
+    api.deleteJob.mockRejectedValueOnce(new Error("offline"));
+    await expect(queue.cleanup(true)).rejects.toThrow("cleanup_failed");
+    expect(queue.getSnapshot().items[0]).toMatchObject({ cleanupError: true, credentials: expect.any(Object), result: expect.any(Blob) });
+    queue.resume();
+    queue.retry();
+    expect(api.createJob).toHaveBeenCalledTimes(1);
+    await queue.cleanup(true);
+    expect(queue.getSnapshot().items[0].credentials).toBeUndefined();
   });
 });
 

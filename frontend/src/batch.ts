@@ -66,24 +66,42 @@ function pauseMessage(code: string): string {
   return `${messageForCode(code)} Your waiting files are still here; resume when ready.`;
 }
 
+function waitForPoll(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, POLL_INTERVAL);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // Only two documents are processed at once. Results are kept as browser Blobs.
 // Server copies stay until the user downloads or clears the batch (or the
 // one-hour expiry) so any finished document can be reopened for manual review
 // without running detection again.
 export class BatchQueue {
   private listeners = new Set<() => void>();
-  private active = new Set<number>();
+  private active = new Map<number, Promise<void>>();
+  private controller = new AbortController();
   private started = false;
   private state: {
     items: BatchItem[];
     paused: boolean;
     pauseReason: string | null;
+    cancelled: boolean;
   };
 
   constructor(files: File[], restored: StoredItem[] | null = null) {
     this.state = {
       paused: false,
       pauseReason: null,
+      cancelled: false,
       items: restored
         ? restored.map((item) => ({
             ...item,
@@ -141,22 +159,26 @@ export class BatchQueue {
   }
 
   start = () => {
+    if (this.state.cancelled) return;
     this.started = true;
     this.pump();
   };
 
   pause = () => {
+    if (this.state.cancelled) return;
     this.state = { ...this.state, paused: true, pauseReason: null };
     this.emit();
   };
 
   resume = () => {
+    if (this.state.cancelled) return;
     this.state = { ...this.state, paused: false, pauseReason: null };
     this.emit();
     this.pump();
   };
 
   retry = (position?: number) => {
+    if (this.state.cancelled) return;
     this.state = {
       ...this.state,
       items: this.state.items.map((item) =>
@@ -172,15 +194,17 @@ export class BatchQueue {
   };
 
   private pump() {
-    if (!this.started || this.state.paused) return;
+    if (!this.started || this.state.paused || this.state.cancelled) return;
     for (const item of this.state.items) {
       if (this.active.size >= CONCURRENCY) break;
       if (item.status !== "waiting" || this.active.has(item.position)) continue;
-      this.active.add(item.position);
-      void this.process(item).finally(() => {
+      // Defer processing until the task is registered, including for subscribers
+      // that synchronously clear the queue when a row changes.
+      const task = Promise.resolve().then(() => this.process(item)).finally(() => {
         this.active.delete(item.position);
         this.pump();
       });
+      this.active.set(item.position, task);
     }
   }
 
@@ -193,6 +217,8 @@ export class BatchQueue {
   }
 
   private async process(item: BatchItem) {
+    const signal = this.controller.signal;
+    if (signal.aborted) return;
     let credentials = item.credentials;
     let job: Job | undefined;
     let createdThisAttempt = false;
@@ -202,7 +228,8 @@ export class BatchQueue {
     });
     try {
       if (credentials) {
-        job = await getJob(credentials);
+        job = await getJob(credentials, signal);
+        signal.throwIfAborted();
         // Failed/partial uploads need a fresh job. A status/download retry resumes
         // the existing job instead of submitting and charging for it twice.
         if (
@@ -213,10 +240,13 @@ export class BatchQueue {
           await this.removeRemote(credentials);
           credentials = undefined;
           this.update(item.position, { credentials: undefined });
+          signal.throwIfAborted();
         }
       }
       if (!credentials) {
         if (!item.file) throw new Error("source_unavailable");
+        // Mutations must settle before deletion: aborting an upload can leave
+        // S3 still committing bytes after cleanup has already removed the job.
         const created = await createJob(item.file, true);
         createdThisAttempt = true;
         credentials = { jobId: created.job_id, token: created.access_token };
@@ -225,9 +255,14 @@ export class BatchQueue {
           status: "uploading",
           cleanupError: false,
         });
+        // Retain credentials even if creation finished just as the batch was
+        // cancelled, so cleanup can delete that server copy too.
+        signal.throwIfAborted();
         await uploadFile(created, item.file);
+        signal.throwIfAborted();
         job = await submitJob(credentials);
       }
+      signal.throwIfAborted();
       if (!job) throw new Error("job_unavailable");
       this.update(item.position, { status: "processing", job });
       while (
@@ -238,18 +273,22 @@ export class BatchQueue {
           "redacting",
         ].includes(job.status)
       ) {
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, POLL_INTERVAL),
-        );
-        job = await getJob(credentials);
+        await waitForPoll(signal);
+        job = await getJob(credentials, signal);
+        signal.throwIfAborted();
         this.update(item.position, { job });
       }
       if (job.status !== "complete")
         throw new ApiError(job.error_code ?? "processing_failed", 409);
       this.update(item.position, { status: "receiving" });
-      const result = await getResultBlob(credentials);
+      const result = await getResultBlob(credentials, signal);
+      signal.throwIfAborted();
       this.update(item.position, { result, status: "ready", cleanupError: false });
     } catch (reason) {
+      if (signal.aborted) {
+        this.update(item.position, { status: "failed", error: "Batch cancelled." });
+        return;
+      }
       const capacityError = reason instanceof ApiError && CAPACITY_CODES.has(reason.code);
       if (capacityError) {
         this.state = {
@@ -301,6 +340,22 @@ export class BatchQueue {
 
   // Used when the batch is cleared, or to retry earlier cleanup failures.
   async cleanup(all = false) {
+    if (all) {
+      this.started = false;
+      this.state = {
+        ...this.state,
+        cancelled: true,
+        paused: true,
+        pauseReason: "Batch cancelled. Clear the remaining server copies to start again.",
+        items: this.state.items.map((item) => item.status === "waiting"
+          ? { ...item, status: "failed", error: "Batch cancelled." }
+          : item),
+      };
+      this.controller.abort();
+      this.emit();
+      // No upload or poll may write this batch back into storage after closing.
+      await Promise.allSettled(this.active.values());
+    }
     const clean = await this.removeMany((item) => all || Boolean(item.cleanupError));
     if (!clean) throw new Error("cleanup_failed");
   }
