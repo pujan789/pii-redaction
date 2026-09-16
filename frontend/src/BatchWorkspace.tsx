@@ -218,7 +218,7 @@ export default function BatchWorkspace({
             disabled={Boolean(busy)}
             onClick={() => void cleanup(true)}
           >
-            {settled ? "Start a new batch" : "Clear batch"}
+            {settled ? "Start a new batch and delete docs from server" : "Clear batch"}
           </button>
         </div>
       </div>
