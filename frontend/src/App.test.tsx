@@ -70,10 +70,7 @@ function fileInFolder(name: string, path: string, type: string): File {
 }
 
 function renderManualDesk() {
-  const view = render(<App />);
-  const manualMode = screen.queryByRole("radio", { name: /review each document/i });
-  if (manualMode) fireEvent.click(manualMode);
-  return view;
+  return render(<App />);
 }
 
 describe("PII redaction desk", () => {
@@ -95,7 +92,7 @@ describe("PII redaction desk", () => {
     expect(apiMocks.deleteJob).not.toHaveBeenCalled();
     fireEvent.click(clear);
     await waitFor(() => expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole("radio", { name: /review each document/i })).toBeInTheDocument());
+    await screen.findByRole("heading", { name: /redact a tax document/i });
     expect(sessionStorage.getItem(BATCH_SESSION_KEY)).toBeNull();
     expect(apiMocks.createJob).not.toHaveBeenCalled();
     confirm.mockRestore();
@@ -149,7 +146,8 @@ describe("PII redaction desk", () => {
 
   it("defaults a 50-file upload to a batch workspace and one ZIP download", async () => {
     render(<App />);
-    expect(screen.getByRole("radio", { name: /redact automatically/i })).toBeChecked();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.getByText(/batches are redacted automatically/i)).toBeVisible();
     const files = Array.from({ length: 50 }, (_, index) => new File(["synthetic"], `document-${index}.pdf`, { type: "application/pdf" }));
     fireEvent.change(screen.getByTestId("files-input"), { target: { files } });
     await waitFor(() => expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(50));
@@ -208,94 +206,50 @@ describe("PII redaction desk", () => {
     expect(folder).toHaveAttribute("directory");
   });
 
-  it("queues supported files from a mixed folder selection", async () => {
-    renderManualDesk();
-    const folder = screen.getByTestId("folder-input");
+  it("automatically redacts supported files from a mixed folder selection", async () => {
+    render(<App />);
     const pdf = fileInFolder("return.PDF", "client/2025/return.PDF", "");
     const jpeg = fileInFolder("scan.jpeg", "client/receipts/scan.jpeg", "image/jpeg");
     const unsupported = fileInFolder("notes.txt", "client/notes.txt", "text/plain");
+    fireEvent.change(screen.getByTestId("folder-input"), { target: { files: [pdf, unsupported, jpeg] } });
 
-    fireEvent.change(folder, { target: { files: [pdf, unsupported, jpeg] } });
-
-    expect(await screen.findByText(/2 supported files queued/i)).toBeVisible();
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
     expect(screen.getByText(/1 unsupported file was skipped/i)).toBeVisible();
     expect(screen.getByText("client/2025/return.PDF")).toBeVisible();
-    expect(screen.getAllByText(/file 1 of 2/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/next: client\/receipts\/scan\.jpeg/i)).toBeVisible();
-    expect(screen.getByRole("heading", { name: /document redaction/i })).toHaveFocus();
-    expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute(
-      "aria-valuenow",
-      "0",
-    );
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(1));
-    expect(apiMocks.createJob).toHaveBeenCalledWith(pdf);
-
-    fireEvent.click(screen.getByRole("button", { name: /download and continue/i }));
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, jpeg);
-    expect(screen.getByRole("progressbar", { name: /batch progress/i })).toHaveAttribute(
-      "aria-valuenow",
-      "1",
-    );
-    expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(
-      expect.any(Blob),
-      expect.any(Function),
-      "redacted-01-of-02.pdf",
-    );
+    expect(screen.getByText("client/receipts/scan.jpeg")).toBeVisible();
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(2);
+    expect(apiMocks.createJob).toHaveBeenCalledWith(pdf, true);
+    expect(apiMocks.createJob).toHaveBeenCalledWith(jpeg, true);
+    expect(apiMocks.finalizeJob).not.toHaveBeenCalled();
+    expect(apiMocks.deleteJob).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: /your documents are ready/i })).toHaveFocus();
   });
 
-  it("filters every file dropped together", async () => {
-    renderManualDesk();
+  it("filters every file dropped together and processes the accepted batch automatically", async () => {
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const unsupported = new File(["notes"], "notes.txt", { type: "text/plain" });
     const second = new File(["second"], "second.tif", { type: "image/tiff" });
-
     fireEvent.drop(screen.getByRole("group", { name: /upload documents/i }), {
       dataTransfer: { files: [first, unsupported, second] },
     });
 
-    expect(await screen.findByText(/2 supported files queued/i)).toBeVisible();
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
     expect(screen.getByText(/1 unsupported file was skipped/i)).toBeVisible();
-    expect(apiMocks.createJob).toHaveBeenCalledWith(first);
-
-    fireEvent.click(screen.getByRole("button", { name: /download and continue/i }));
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, second);
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(2);
+    expect(apiMocks.createJob).toHaveBeenCalledWith(first, true);
+    expect(apiMocks.createJob).toHaveBeenCalledWith(second, true);
   });
 
-  it("starts the next queued file after downloading the current result", async () => {
-    renderManualDesk();
-    const files = screen.getByTestId("files-input");
-    const first = new File(["first"], "first.pdf", { type: "application/pdf" });
-    const second = new File(["second"], "second.png", { type: "image/png" });
-    const third = new File(["third"], "third.jpeg", { type: "image/jpeg" });
+  it("keeps single-document review when only one supported file is selected", async () => {
+    render(<App />);
+    const file = new File(["synthetic"], "single.pdf", { type: "application/pdf" });
+    const unsupported = new File(["notes"], "notes.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [file, unsupported] } });
 
-    fireEvent.change(files, { target: { files: [first, second, third] } });
-
-    expect(await screen.findByRole("heading", { name: /your redacted pdf is ready/i })).toBeVisible();
-    expect(apiMocks.createJob).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: /download and continue to next file/i }));
-
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(1, first);
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, second);
-    expect(apiMocks.deleteJob).toHaveBeenCalledWith({
-      jobId: jobIdFor(first),
-      token: `token-${first.name}`,
-    });
-    expect(downloadMocks.saveBlobAndDelete).toHaveBeenCalledWith(
-      expect.any(Blob),
-      expect.any(Function),
-      "redacted-01-of-03.pdf",
-    );
-    await waitFor(() => expect(screen.getByText("second.png")).toBeVisible());
-    expect(screen.getAllByText(/file 2 of 3/i).length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole("button", { name: /download and continue to next file/i }));
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(3));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(3, third);
-    await waitFor(() => expect(screen.getByText("third.jpeg")).toBeVisible());
-    expect(screen.getAllByText(/file 3 of 3/i).length).toBeGreaterThan(0);
+    await screen.findByRole("heading", { name: /your redacted pdf is ready/i });
+    expect(apiMocks.createJob).toHaveBeenCalledExactlyOnceWith(file);
+    expect(screen.queryByRole("button", { name: /download all/i })).not.toBeInTheDocument();
   });
 
   it("keeps destructive actions disabled until an upload settles", async () => {
@@ -317,90 +271,64 @@ describe("PII redaction desk", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /delete now/i })).toBeEnabled());
   });
 
-  it("preserves the remaining queue when a file cannot start", async () => {
+  it("continues the automatic batch when one file cannot start and allows retry", async () => {
     apiMocks.createJob.mockRejectedValueOnce(new Error("offline"));
-    renderManualDesk();
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [first, second] } });
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /could not be started/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /skip file and continue/i }));
-
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, second);
-    await waitFor(() => expect(screen.getByText("second.pdf")).toBeVisible());
+    await waitFor(() => expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(1));
+    expect(apiMocks.createJob).toHaveBeenCalledWith(second, true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry first.pdf" }));
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(3);
+    expect(apiMocks.createJob).toHaveBeenLastCalledWith(first, true);
   });
 
-  it("deletes the active job and clears pending files when a batch is cancelled", async () => {
-    renderManualDesk();
+  it("deletes the completed batch's server copies before starting a new batch", async () => {
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [first, second] } });
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
+    fireEvent.click(screen.getByRole("button", { name: "Start a new batch and delete docs from server" }));
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /redacted pdf is ready/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /cancel batch/i }));
-
-    const intakeHeading = await screen.findByRole("heading", { name: /redact a tax document/i });
-    expect(intakeHeading).toBeVisible();
-    expect(intakeHeading).toHaveFocus();
-    expect(screen.getByText(/batch was cancelled/i)).toBeVisible();
-    expect(apiMocks.deleteJob).toHaveBeenCalledWith({
-      jobId: jobIdFor(first),
-      token: `token-${first.name}`,
-    });
-    expect(apiMocks.createJob).toHaveBeenCalledTimes(1);
+    const intake = await screen.findByRole("heading", { name: /redact a tax document/i });
+    await waitFor(() => expect(intake).toHaveFocus());
+    expect(window.confirm).toHaveBeenCalled();
+    expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2);
+    expect(apiMocks.deleteJob).toHaveBeenCalledWith({ jobId: jobIdFor(first), token: `token-${first.name}` });
+    expect(apiMocks.deleteJob).toHaveBeenCalledWith({ jobId: jobIdFor(second), token: `token-${second.name}` });
+    expect(sessionStorage.getItem(BATCH_SESSION_KEY)).toBeNull();
   });
 
-  it("can delete a partial upload and continue after an upload failure", async () => {
+  it("cleans up a partial upload while the rest of the automatic batch completes", async () => {
     apiMocks.uploadFile.mockRejectedValueOnce(new Error("upload failed"));
-    apiMocks.getJob.mockImplementation(async ({ jobId }: { jobId: string }) => ({
-      ...completeJob(jobId),
-      status: "awaiting_upload" as const,
-      page_count: null,
-      pages_completed: 0,
-    }));
-    renderManualDesk();
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [first, second] } });
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /could not be started/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /skip file and continue/i }));
-
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.deleteJob).toHaveBeenCalledWith({
-      jobId: jobIdFor(first),
-      token: `token-${first.name}`,
-    });
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, second);
+    await waitFor(() => expect(apiMocks.getResultBlob).toHaveBeenCalledTimes(1));
+    expect(apiMocks.createJob).toHaveBeenCalledWith(second, true);
+    expect(apiMocks.deleteJob).toHaveBeenCalledWith({ jobId: jobIdFor(first), token: `token-${first.name}` });
+    fireEvent.click(screen.getByRole("button", { name: "Retry first.pdf" }));
+    await screen.findByRole("button", { name: /download all 2 PDFs/i });
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(3);
   });
 
-  it("continues a batch when expiry cleanup already deleted the downloaded job", async () => {
+  it("downloads the batch when expiry cleanup already deleted a server copy", async () => {
     apiMocks.deleteJob.mockRejectedValueOnce(new ApiError("job_not_found", 404));
-    renderManualDesk();
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [first, second] } });
+    fireEvent.click(await screen.findByRole("button", { name: /download all 2 PDFs/i }));
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /redacted pdf is ready/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /download and continue/i }));
-
-    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2));
-    expect(apiMocks.createJob).toHaveBeenNthCalledWith(2, second);
-    expect(screen.queryByText(/deletion could not be confirmed/i)).not.toBeInTheDocument();
+    await screen.findByText(/download started/i);
+    expect(apiMocks.deleteJob).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: /retry cleanup/i })).not.toBeInTheDocument();
   });
 
   it("can retry a transient status failure for a restored job", async () => {
@@ -423,41 +351,9 @@ describe("PII redaction desk", () => {
     expect(apiMocks.getJob).toHaveBeenCalledTimes(2);
   });
 
-  it("finishes a batch without claiming skipped files were downloaded", async () => {
-    renderManualDesk();
-    const first = new File(["first"], "first.pdf", { type: "application/pdf" });
-    const second = new File(["second"], "second.pdf", { type: "application/pdf" });
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
 
-    expect(await screen.findByRole("heading", { name: /redacted pdf is ready/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /skip this file/i }));
-    await waitFor(() => expect(screen.getByText("second.pdf")).toBeVisible());
-    fireEvent.click(screen.getByRole("button", { name: /download and delete server copy/i }));
 
-    expect(await screen.findByText(/the batch is complete/i)).toBeVisible();
-    expect(screen.queryByText(/all 2 redacted pdfs reached/i)).not.toBeInTheDocument();
-  });
-
-  it("does not leave a stale advancement message after deleting the final batch file", async () => {
-    renderManualDesk();
-    const first = new File(["first"], "first.pdf", { type: "application/pdf" });
-    const second = new File(["second"], "second.pdf", { type: "application/pdf" });
-
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /redacted pdf is ready/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /download and continue/i }));
-    await waitFor(() => expect(screen.getByText("second.pdf")).toBeVisible());
-    fireEvent.click(screen.getByRole("button", { name: /delete without downloading/i }));
-
-    expect(await screen.findByText(/the batch ended/i)).toBeVisible();
-    expect(screen.queryByText(/starting the next file/i)).not.toBeInTheDocument();
-  });
 
   it("describes every rejection reason when no selected file can be queued", () => {
     renderManualDesk();
@@ -477,22 +373,19 @@ describe("PII redaction desk", () => {
     expect(apiMocks.createJob).not.toHaveBeenCalled();
   });
 
-  it("keeps the local queue when batch cancellation is declined", async () => {
+  it("keeps the completed batch when starting a new batch is declined", async () => {
     vi.mocked(window.confirm).mockReturnValueOnce(false);
-    renderManualDesk();
+    render(<App />);
     const first = new File(["first"], "first.pdf", { type: "application/pdf" });
     const second = new File(["second"], "second.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("files-input"), { target: { files: [first, second] } });
+    const download = await screen.findByRole("button", { name: /download all 2 PDFs/i });
+    fireEvent.click(screen.getByRole("button", { name: "Start a new batch and delete docs from server" }));
 
-    fireEvent.change(screen.getByTestId("files-input"), {
-      target: { files: [first, second] },
-    });
-
-    expect(await screen.findByRole("heading", { name: /redacted pdf is ready/i })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /cancel batch/i }));
-
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/1 waiting file/i));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/unsaved PDFs/i));
     expect(apiMocks.deleteJob).not.toHaveBeenCalled();
-    expect(screen.getByText(/1 file is waiting locally/i)).toBeVisible();
+    expect(download).toBeEnabled();
+    expect(screen.queryByRole("heading", { name: /redact a tax document/i })).not.toBeInTheDocument();
   });
 
   it("keeps review recovery available after its error toast is dismissed", async () => {
