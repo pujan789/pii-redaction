@@ -104,7 +104,6 @@ function ShieldIcon() {
 }
 
 export default function App() {
-  const [automaticBatch, setAutomaticBatch] = useState(true);
   const [batchQueue, setBatchQueue] = useState<BatchQueue | null>(() => {
     const restored = readBatchSession();
     return restored ? new BatchQueue([], restored) : null;
@@ -361,29 +360,19 @@ export default function App() {
       );
     }
 
-    if (selection.accepted.length > 1 && automaticBatch) {
+    if (selection.accepted.length > 1) {
       recordUsageAction("batch", selection.accepted.length);
       setNotice(skippedNotes.join(" ") || null);
       setBatchQueue(new BatchQueue(selection.accepted));
       return;
     }
 
-    const [first, ...pending] = selection.accepted;
-    if (selection.accepted.length > 1) recordUsageAction("batch", selection.accepted.length);
-    const notes: string[] = [];
-    if (selection.accepted.length > 1) {
-      notes.push(`${selection.accepted.length} supported files queued.`);
-    }
-    notes.push(...skippedNotes);
-    if (selection.accepted.length > 1) {
-      notes.push("They will upload one at a time; refreshing this tab clears the local queue.");
-    }
-
-    setPendingFiles(pending);
-    setBatchTotal(selection.accepted.length);
+    const [first] = selection.accepted;
+    setPendingFiles([]);
+    setBatchTotal(1);
     setBatchPosition(1);
-    setNotice(notes.join(" ") || null);
-    void startFile(first, 1, selection.accepted.length);
+    setNotice(skippedNotes.join(" ") || null);
+    void startFile(first, 1, 1);
   }
 
   function startNextFile(message: string): boolean {
@@ -667,8 +656,8 @@ export default function App() {
                 Redact a tax document
               </h1>
               <p>
-                Upload a document or an entire folder. Redact automatically, or review
-                each file before downloading.
+                Batches are redacted automatically. Preview or manually review any
+                finished document before downloading. Single files open in review.
               </p>
             </div>
 
@@ -683,8 +672,8 @@ export default function App() {
               <div>
                 <ShieldIcon />
                 <span>
-                  <strong>Your choice of workflow</strong>
-                  Automatic batches or detailed manual review.
+                  <strong>Review any document</strong>
+                  Preview results and adjust redactions before downloading.
                 </span>
               </div>
               <div>
@@ -697,19 +686,6 @@ export default function App() {
             </div>
 
             <div className="upload-card">
-              <fieldset className="batch-mode">
-                <legend>When you upload multiple files</legend>
-                <div className="batch-mode-options">
-                  <label className={automaticBatch ? "is-selected" : ""}>
-                    <input type="radio" name="batch-mode" checked={automaticBatch} onChange={() => setAutomaticBatch(true)} />
-                    <span><strong>Redact automatically</strong><small>Process every file and download together. Single files always open in review.</small></span>
-                  </label>
-                  <label className={!automaticBatch ? "is-selected" : ""}>
-                    <input type="radio" name="batch-mode" checked={!automaticBatch} onChange={() => setAutomaticBatch(false)} />
-                    <span><strong>Review each document</strong><small>Adjust suggested redactions before export.</small></span>
-                  </label>
-                </div>
-              </fieldset>
               <div
                 className={`drop-zone ${dragging ? "is-dragging" : ""} ${busyLabel ? "is-busy" : ""}`}
                 role="group"

@@ -16,69 +16,6 @@
   --danger: #b42318;
 }
 
-.batch-mode {
-  min-width: 0;
-  margin: 0 0 24px;
-  padding: 0;
-  border: 0;
-  text-align: left;
-}
-
-.batch-mode legend {
-  margin-bottom: 12px;
-  padding: 0;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.5;
-}
-
-.batch-mode-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.batch-mode label {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.batch-mode label.is-selected {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.batch-mode input {
-  flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
-  margin: 3px 0 0;
-  accent-color: var(--primary);
-}
-
-.batch-mode strong,
-.batch-mode small {
-  display: block;
-}
-
-.batch-mode strong {
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.batch-mode small {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
 .batch-workspace { width: min(1280px, calc(100% - 48px)); margin: 0 auto; padding: 44px 0 28px; }
 .batch-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 28px; }
 .batch-heading h1 { margin: 8px 0 10px; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.045em; line-height: 1.2; }
@@ -151,7 +88,6 @@
 }
 @media (max-width: 560px) {
   .batch-workspace { width: calc(100% - 28px); padding-top: 28px; }
-  .batch-mode-options { grid-template-columns: 1fr; }
   .batch-overview { grid-template-columns: 1fr 1fr; }
   .batch-metric:nth-child(2) { border-right: 0; }
   .batch-metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -1065,10 +1001,6 @@ footer a:hover {
 
   .upload-card {
     padding: 20px;
-  }
-
-  .batch-mode label {
-    padding: 16px;
   }
 
   .drop-zone {

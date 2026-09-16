@@ -31,9 +31,8 @@ client documents. Use the hosted tool or run the same pipeline on your own serve
 3. Review the proposed redactions, or use automatic redaction for a batch.
 4. Download the redacted PDFs individually or as a ZIP.
 
-Single-document uploads open manual review. Batches default to automatic redaction;
-choose **Review each document** before uploading if you want to approve every file.
-You can also select **Review manually** on a finished batch document to change its
+Single-document uploads open manual review. Multiple files are redacted automatically.
+Select **Review manually** on any finished batch document to change its
 boxes and rebuild the PDF without running detection again.
 
 Automatic detection can miss information. Check the results before sharing, especially
